@@ -18,7 +18,7 @@ HELP_TEXT = """\
 [bold]VIMD 快捷键[/bold]
 
   [cyan]视图[/cyan]   F2 编辑 · F3 预览 · F4 分屏
-  [cyan]文件[/cyan]   Ctrl+S 保存 · Ctrl+Shift+S 另存为 · Ctrl+O 打开
+  [cyan]文件[/cyan]   Ctrl+N 新建 · Ctrl+O 打开 · Ctrl+S 保存 · Ctrl+Shift+S 另存为
   [cyan]格式[/cyan]   Ctrl+B 加粗 · Ctrl+I 斜体 · Ctrl+K 代码块
           Ctrl+L 链接 · Ctrl+Shift+L 图片
   [cyan]查找[/cyan]   Ctrl+F 弹窗 · Enter 下一个 · Shift+Enter 上一个
@@ -118,16 +118,27 @@ class PathPrompt(ModalScreen[str | None]):
 
 
 class QuitConfirm(ModalScreen[str]):
-    """退出前的未保存确认: 返回 save / discard / cancel。"""
+    """退出/新建前的未保存确认: 返回 save / discard / cancel。"""
 
     BINDINGS = [("escape", "cancel", "取消")]
 
+    def __init__(self, purpose: str = "quit") -> None:
+        super().__init__()
+        self.purpose = purpose  # "quit" (默认) | "new"
+
     def compose(self) -> ComposeResult:
+        new = self.purpose == "new"
         with ModalBox(id="quit-box"):
             yield Static("文档尚未保存", id="quit-title")
             with Horizontal(id="quit-buttons"):
-                yield Button("保存并退出", id="save", variant="primary")
-                yield Button("不保存退出", id="discard")
+                yield Button(
+                    "保存并新建" if new else "保存并退出",
+                    id="save",
+                    variant="primary",
+                )
+                yield Button(
+                    "不保存新建" if new else "不保存退出", id="discard"
+                )
                 yield Button("取消", id="cancel")
 
     @on(Button.Pressed)

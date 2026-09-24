@@ -117,6 +117,7 @@ class VIMDApp(App):
     BINDINGS = [
         # 文件/编辑/查找键照常生效但不在 footer 展示:
         # 只留 5 个可见项, 窄终端也排得开
+        Binding("ctrl+n", "new", "新建", show=False),
         Binding("ctrl+s", "save", "保存", show=False),
         Binding("ctrl+shift+s", "save_as", "另存为", show=False),
         Binding("ctrl+o", "open", "打开", show=False),
@@ -450,15 +451,74 @@ class VIMDApp(App):
         # ok 且空 = 用户取消
 
     def _on_save_as_path(self, value: str | None) -> None:
+        """另存为接管路径并保存 (系统对话框分支 / 内置输入回调共用)。"""
+        if self._adopt_save_as_path(value):
+            asyncio.create_task(self.action_save())
+
+    def _adopt_save_as_path(self, value: str | None) -> bool:
+        """只接管 file_path / 预览基目录 / 文件锁, 不保存。
+
+        需要"保存真正完成后再继续"的流程 (退出/新建) 接管后自己
+        await action_save — 裸调 action_save() 没人 await, 不会执行。
+        """
         if not value:
-            return
+            return False
         path = Path(value)
         if not path.suffix:
             path = path.with_suffix(".md")
         self.file_path = path
         self.query_one(Preview).doc_dir = path.parent
         self.file_guard.acquire(str(path))
-        self.action_save()
+        return True
+
+    # ── 新建 (Ctrl+N): 脏态先问, 保存链镜像退出链 ──────────
+    def action_new(self) -> None:
+        if self.query_one(Editor).text != self._saved_text:
+            self.push_screen(QuitConfirm("new"), self._on_new_choice)
+        else:
+            self._do_new()
+
+    def _on_new_choice(self, choice: str) -> None:
+        if choice == "save":
+            if self.file_path is not None:
+                asyncio.create_task(self._save_then_new())
+            else:
+                asyncio.create_task(self._new_via_save_as())
+        elif choice == "discard":
+            self._clear_recovery()
+            self._do_new()
+
+    def _do_new(self) -> None:
+        self.file_path = None
+        self.file_guard.release()
+        editor = self.query_one(Editor)
+        editor.text = ""
+        self._saved_text = ""
+        preview = self.query_one(Preview)
+        preview.doc_dir = Path.cwd()
+        preview.update("")
+        self.refresh_status()
+        self.notify("已新建文件")
+
+    async def _save_then_new(self) -> None:
+        await self.action_save()
+        self._do_new()
+
+    async def _new_via_save_as(self) -> None:
+        ok, value = await system_save_file_dialog("未命名.md")
+        if ok and value:
+            self._adopt_save_as_path(value)
+            await self.action_save()
+            self._do_new()
+        elif not ok:
+            self.push_screen(
+                PathPrompt("另存为", "未命名.md"), self._new_after_save_path
+            )
+        # ok 且空 = 用户取消保存 → 放弃新建
+
+    def _new_after_save_path(self, value: str | None) -> None:
+        if self._adopt_save_as_path(value):
+            asyncio.create_task(self._save_then_new())
 
     # ── 查找替换 (居中弹窗; 状态存 app.find_state) ──────────
     def action_find(self) -> None:
@@ -515,7 +575,8 @@ class VIMDApp(App):
     async def _quit_via_save_as(self) -> None:
         ok, value = await system_save_file_dialog("未命名.md")
         if ok and value:
-            self._on_save_as_path(value)
+            self._adopt_save_as_path(value)
+            await self.action_save()  # 落盘完成再退出
             self.exit()
         elif not ok:
             self.push_screen(
@@ -524,11 +585,5 @@ class VIMDApp(App):
         # ok 且空 = 用户取消保存 → 不退出
 
     def _save_then_quit(self, value: str | None) -> None:
-        if not value:
-            return
-        path = Path(value)
-        if not path.suffix:
-            path = path.with_suffix(".md")
-        self.file_path = path
-        self.file_guard.acquire(str(path))
-        asyncio.create_task(self._save_and_exit())
+        if self._adopt_save_as_path(value):
+            asyncio.create_task(self._save_and_exit())

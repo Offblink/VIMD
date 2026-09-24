@@ -23,6 +23,9 @@ from textual.widgets import Markdown
 
 from .links import classify_navigation_url, local_path_from_navigation
 
+PREVIEW_MAX = 262_144  # 预览渲染字符上限, 超出截断并提示
+# 实测 2.9M 字符全文重建 ~4.4s/次: 每个防抖到期全量重建 = 大文件打字卡死
+
 
 def open_href(href: str, doc_dir: Path, notify) -> None:
     """把一个 href 分流到 浏览器 / 系统默认程序；失败时 notify 提示。
@@ -78,11 +81,24 @@ class Preview(Markdown):
         super().__init__(open_links=False, **kwargs)
         self.can_focus = True  # 预览模式下接管键盘焦点
         self.doc_dir: Path = Path.cwd()
+        self._source: str | None = None  # 上次喂给渲染的原文 (同文去重)
 
     def on_markdown_link_clicked(self, event: Markdown.LinkClicked) -> None:
         event.stop()
         open_href(event.href, self.doc_dir, self.app.notify)
 
     def update(self, markdown: str):
-        """渲染前归一化带空格的目的地 (见 normalize_dests)。"""
-        return super().update(normalize_dests(markdown))
+        """同文去重 + 超长截断 (PREVIEW_MAX) + 归一化空格目的地。"""
+        if markdown == self._source:
+            # 打开时显式渲染过, Changed 防抖又来一次: 同文重建纯属浪费
+            return None
+        self._source = markdown
+        body = markdown
+        if len(body) > PREVIEW_MAX:
+            cut = body[:PREVIEW_MAX].rsplit("\n", 1)[0]
+            notice = (
+                f"> ⚠ 内容 {len(markdown)} 字符, "
+                f"预览仅渲染前 {len(cut)} 字符 (编辑与保存不受影响)\n\n"
+            )
+            body = notice + cut
+        return super().update(normalize_dests(body))

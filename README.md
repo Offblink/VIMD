@@ -44,6 +44,7 @@ python vimd.py 文档.md
 
 ## 说明
 
+- 在 Windows 上用**终端**（如 Windows Terminal）运行，别用控制台主机：实测大量 CLI（包括 VIMD）在控制台主机里图标和显示都不正常
 - 斜体用 `Ctrl+I`：需要终端支持 kitty 键盘协议（Windows Terminal 支持）；不支持的终端改用 `Alt+I`
 - 中文由终端输入法处理，组词完成后整词上屏
 - 编辑区语法高亮需要安装 tree-sitter 的 Markdown 语法包，未安装时为纯文本，不影响预览渲染

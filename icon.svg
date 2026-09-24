@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <rect x="4" y="4" width="248" height="248" rx="52" fill="#1e1e2e"/>
+  <text x="104" y="176" font-family="Segoe UI" font-size="150" font-weight="bold"
+        fill="#f0f4f3" text-anchor="middle">V</text>
+  <rect x="140" y="156" width="52" height="34" rx="6" fill="#3ac569"/>
+  <text x="196" y="74" font-family="Segoe UI" font-size="64" font-weight="bold"
+        fill="#54a0ff" text-anchor="middle">#</text>
+</svg>

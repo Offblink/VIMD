@@ -8,14 +8,17 @@ from textual.events import Click
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Static
+from textual.content import Content
+from textual.style import Style
+from textual.widgets import Button, Checkbox, Input, Static
 
 HELP_TEXT = """\
 [bold]VIMD 快捷键[/bold]
 
   [cyan]视图[/cyan]   F2 编辑 · F3 预览 · F4 分屏
   [cyan]文件[/cyan]   Ctrl+S 保存 · Ctrl+Shift+S 另存为 · Ctrl+O 打开
-  [cyan]格式[/cyan]   Ctrl+B 加粗 · Ctrl+I 斜体 · Ctrl+K 代码块 · Ctrl+L 链接 · Ctrl+Shift+L 图片
+  [cyan]格式[/cyan]   Ctrl+B 加粗 · Ctrl+I 斜体 · Ctrl+K 代码块
+          Ctrl+L 链接 · Ctrl+Shift+L 图片
   [cyan]查找[/cyan]   Ctrl+F 弹窗 · Enter 下一个 · Shift+Enter 上一个
   [cyan]其他[/cyan]   Ctrl+Z/Y 撤销重做 · Ctrl+H 帮助 · Ctrl+Q 退出
 
@@ -30,6 +33,28 @@ class ModalBox(Vertical):
         event.stop()
 
 
+class CaseCheckbox(Checkbox):
+    """开关勾选框: 开 = √ (success 绿), 关 = 留空。
+
+    ToggleButton 的 BUTTON_INNER 恒为 "X", 两种状态只换颜色 —
+    这里按状态换字形 (大小写 / 显示行号共用此 UX)。
+    """
+
+    @property
+    def _button(self) -> Content:
+        button_style = self.get_visual_style("toggle--button")
+        side_style = Style(
+            foreground=button_style.background,
+            background=self.background_colors[1],
+        )
+        inner = "√" if self.value else " "
+        return Content.assemble(
+            (self.BUTTON_LEFT, side_style),
+            (inner, button_style),
+            (self.BUTTON_RIGHT, side_style),
+        )
+
+
 class HelpScreen(ModalScreen[None]):
     """Ctrl+H 帮助。点击盒外关闭。"""
 
@@ -41,6 +66,7 @@ class HelpScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with ModalBox(id="help-box"):
             yield Static(HELP_TEXT)
+            yield CaseCheckbox("显示行号", id="line-check")
             yield Static("[dim]Enter / Esc 关闭[/dim]", id="help-hint")
 
     def action_dismiss_screen(self) -> None:
@@ -48,6 +74,15 @@ class HelpScreen(ModalScreen[None]):
 
     def on_click(self, event: Click) -> None:
         self.action_dismiss_screen()
+
+    def on_mount(self) -> None:
+        box = self.query_one("#line-check", Checkbox)
+        if box.value != self.app.show_line_numbers:
+            box.value = self.app.show_line_numbers
+
+    @on(Checkbox.Changed, "#line-check")
+    def line_toggled(self, event: Checkbox.Changed) -> None:
+        self.app.set_line_numbers(event.value)
 
 
 class PathPrompt(ModalScreen[str | None]):

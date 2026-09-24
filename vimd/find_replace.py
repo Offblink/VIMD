@@ -19,11 +19,9 @@ from textual.containers import Horizontal
 from textual.document._document import Selection
 from textual.events import Click
 from textual.screen import ModalScreen
-from textual.content import Content
-from textual.style import Style
 from textual.widgets import Button, Checkbox, Input, Static
 
-from .dialogs import ModalBox
+from .dialogs import CaseCheckbox, ModalBox
 from .editor import Editor
 
 
@@ -131,28 +129,6 @@ def replace_current(editor: Editor, state: FindState, notify=None) -> None:
                 notify("已替换全部匹配")
             return
     find_next(editor, state, notify=notify)
-
-
-class CaseCheckbox(Checkbox):
-    """区分大小写勾选框: 开 = √ (success 绿), 关 = 留空。
-
-    ToggleButton 的 BUTTON_INNER 恒为 "X", 两种状态只换颜色 —
-    这里按状态换字形: 关态不显示叉, 直接留空。
-    """
-
-    @property
-    def _button(self) -> Content:
-        button_style = self.get_visual_style("toggle--button")
-        side_style = Style(
-            foreground=button_style.background,
-            background=self.background_colors[1],
-        )
-        inner = "√" if self.value else " "
-        return Content.assemble(
-            (self.BUTTON_LEFT, side_style),
-            (inner, button_style),
-            (self.BUTTON_RIGHT, side_style),
-        )
 
 
 class FindScreen(ModalScreen[None]):

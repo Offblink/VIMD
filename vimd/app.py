@@ -12,13 +12,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 import os
 from pathlib import Path
 
+from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from .io import FileGuard, read_text_file, write_text_file
 
@@ -57,8 +59,14 @@ class VIMDApp(App):
         height: 1; dock: bottom; background: $panel;
         color: $text-muted; padding: 0 1;
     }
-    #hints { width: 1fr; }
-    #meta { width: auto; text-align: right; }
+    #gap { width: 1fr; }
+    #botbar Button {
+        height: 1; min-width: 0;
+        background: transparent; color: $text-muted;
+        border: none; text-align: left;
+    }
+    #botbar Button:hover { color: $text; background: $panel; }
+    #help-box Static { text-wrap: wrap; }
     HelpScreen, PathPrompt, QuitConfirm { align: center middle; }
     FindScreen { align: right bottom; }
     ToastRack { dock: top; align: right top; }
@@ -101,6 +109,7 @@ class VIMDApp(App):
         self._mode = "edit"
         self._preview_gen = 0  # 防抖代数计数
         self.find_state = FindState()  # 查找状态跨弹窗存续
+        self.show_line_numbers = True  # 帮助弹窗内可切换 (CaseCheckbox 同款 UX)
 
     # ── 组装 ────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
@@ -110,12 +119,17 @@ class VIMDApp(App):
             with VerticalScroll(id="preview-scroll"):
                 yield Preview(id="preview")
         with Horizontal(id="botbar"):
-            yield Static(
-                "Ctrl+H 帮助   F2 编辑   F3 预览   F4 分屏", id="hints"
-            )
-            yield Static("", id="meta")
+            yield Button("Ctrl+H 帮助", id="hint-h", compact=True)
+            yield Button("F2 编辑", id="hint-2", compact=True)
+            yield Button("F3 预览", id="hint-3", compact=True)
+            yield Button("F4 分屏", id="hint-4", compact=True)
+            yield Static("", id="gap")
+            yield Button("", id="meta", compact=True)
 
     def on_mount(self) -> None:
+        # 终端标签/窗口标题 = VIMD (textual 无终端标题 API, 自发 OSC2)
+        sys.stdout.write("\x1b]2;VIMD\x07")
+        sys.stdout.flush()
         mode = self._load_mode()
         if self.path_arg:
             p = Path(self.path_arg)
@@ -197,14 +211,39 @@ class VIMDApp(App):
         self.query_one(Preview).update(self.query_one(Editor).text)
 
     # ── 状态栏 ──────────────────────────────────────────────
+    @on(Button.Pressed)
+    def botbar_pressed(self, event: Button.Pressed) -> None:
+        """底行左侧键位芯片可点击; id=meta 无映射 → 按压动画有、动作无。
+
+        不带选择器: @on 的选择器按发送者匹配, "#botbar"(容器) 永远不中。
+        其它弹窗的按钮 id 不在映射里 → 无操作, 天然互不干扰。
+        """
+        actions = {
+            "hint-h": self.action_show_help,
+            "hint-2": self.action_mode_edit,
+            "hint-3": self.action_mode_preview,
+            "hint-4": self.action_mode_split,
+        }
+        action = actions.get(event.button.id)
+        if action is not None:
+            action()
+
+    def set_line_numbers(self, visible: bool) -> None:
+        self.show_line_numbers = visible
+        self.query_one(Editor).show_line_numbers = visible
+
     def refresh_status(self) -> None:
         editor = self.query_one(Editor)
-        row, col = editor.cursor_location
+        _, col = editor.cursor_location
+        # 软换行下右下行号也按视觉行走 (与 gutter 编号一致)
+        _, vis_y = editor.wrapped_document.location_to_offset(
+            editor.cursor_location
+        )
         name = self.file_path.name if self.file_path else "未命名"
         dirty = "● " if editor.text != self._saved_text else ""
         self.query_one("#topbar", Static).update(f" {dirty}{name}")
-        self.query_one("#meta", Static).update(
-            f"{self._mode}  {row + 1}:{col + 1}"
+        self.query_one("#meta", Button).label = (
+            f"{self._mode}  {vis_y + 1}:{col + 1}"
         )
 
     # ── 文件操作 ────────────────────────────────────────────

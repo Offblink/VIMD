@@ -31,7 +31,7 @@ python vimd.py 文档.md
 
 ## 标题与图标
 
-- 启动即把**终端标签标题设为 VIMD**（自写 OSC2 序列，textual 无此 API）
+- 启动即把**终端标签标题设为 VIMD**（`SetConsoleTitleW`，与 cmd `title` 命令同一底层；实测直接写 OSC2 会被 textual 驱动吞掉）
 - 图标三件套：`icon.svg`（矢量源）、`icon.png`、`icon.ico`（16–256 多尺寸，打包用）
 - 设计：深底圆角方块 + 白色 **V** + 绿色块状光标（VIM）+ markdown 蓝 **#**（MD）
 - **标签/任务栏显示图标**：Windows Terminal 暂不支持应用自带改标签图标，打包成 exe 后任务栏/应用图标用 `icon.ico`（PyInstaller spec `icon=`）；日常使用可给 WT 配置文件指定图标：设置 → 配置文件 → 图标 → 选 `icon.png`

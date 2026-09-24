@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
 import os
 from pathlib import Path
 
@@ -60,6 +59,12 @@ class VIMDApp(App):
         color: $text-muted; padding: 0 1;
     }
     #gap { width: 1fr; }
+    #preview-scroll {
+        border: tall $border-blurred;
+    }
+    #preview-scroll:focus {
+        border: tall $border;
+    }
     #botbar Button {
         height: 1; min-width: 0;
         background: transparent; color: $text-muted;
@@ -127,9 +132,14 @@ class VIMDApp(App):
             yield Button("", id="meta", compact=True)
 
     def on_mount(self) -> None:
-        # 终端标签/窗口标题 = VIMD (textual 无终端标题 API, 自发 OSC2)
-        sys.stdout.write("\x1b]2;VIMD\x07")
-        sys.stdout.flush()
+        # 终端标签/窗口标题 = VIMD。
+        # 实测: 写 OSC2 到 sys.stdout 会被 textual 驱动吞掉 (输出抓包无 ]2;)。
+        # 改走 SetConsoleTitleW — cmd 的 title 命令即此 API,
+        # ConPTY 再转成 OSC2 送达 Windows Terminal 标签。
+        if os.name == "nt":
+            import ctypes
+
+            ctypes.windll.kernel32.SetConsoleTitleW("VIMD")
         mode = self._load_mode()
         if self.path_arg:
             p = Path(self.path_arg)

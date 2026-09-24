@@ -68,8 +68,11 @@ class Editor(TextArea):
             # (宽度不变 -> cell_length 与上游缓存全部保持有效)
             segments = list(strip)
             first = segments[0]
-            width = max(self.gutter_width - 2, 0)
-            text = f"{str(y + self.line_number_start):>{width}}  "
-            segments[0] = Segment(text, first.style, first.control)
-            strip = Strip(segments, strip.cell_length)
+            # 只有真正的 gutter 段才重编号: 原生 gutter 恒为 gutter_width 宽
+            # (文档末尾之外的视口行没有 gutter, 盲改会把整行内容段砍塌 -> 边框错乱)
+            if len(first.text) == self.gutter_width:
+                width = max(self.gutter_width - 2, 0)
+                text = f"{str(y + self.line_number_start):>{width}}  "
+                segments[0] = Segment(text, first.style, first.control)
+                strip = Strip(segments, strip.cell_length)
         return strip

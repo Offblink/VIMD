@@ -91,18 +91,28 @@ class VIMDApp(App):
         border: none; text-align: left;
     }
     #botbar Button:hover { color: $text; background: $panel; }
+    #hint-recover { display: none; }
     #help-box Static { text-wrap: wrap; }
-    HelpScreen, PathPrompt, QuitConfirm { align: center middle; }
+    HelpScreen, PathPrompt, QuitConfirm, RecoveryPrompt {
+        align: center middle;
+    }
     FindScreen { align: right bottom; }
     ToastRack { dock: top; align: right top; }
-    #help-box, #prompt-box, #quit-box, #recover-box {
+    #help-box, #prompt-box, #quit-box {
         width: 76; height: auto; max-height: 90%;
         padding: 1 2; background: $surface; border: thick $accent;
     }
     #quit-box { width: 60; }
+    #recover-box {
+        width: auto; height: auto; max-width: 90%; max-height: 90%;
+        padding: 1 2; background: $surface; border: thick $accent;
+    }
+    #recover-box Static { text-wrap: wrap; }
     #help-hint, #quit-title { margin-top: 1; }
     #quit-buttons { height: 3; margin-top: 1; }
     #quit-buttons Button { margin: 0 1; }
+    #recover-buttons { width: auto; height: 3; margin-top: 1; }
+    #recover-buttons Button { margin: 0 1; }
     """
     BINDINGS = [
         # 文件/编辑/查找键照常生效但不在 footer 展示:
@@ -155,6 +165,7 @@ class VIMDApp(App):
             yield Button("F2 编辑", id="hint-2", compact=True)
             yield Button("F3 预览", id="hint-3", compact=True)
             yield Button("F4 分屏", id="hint-4", compact=True)
+            yield Button("恢复", id="hint-recover", compact=True)
             yield Static("", id="gap")
             yield Button("", id="meta", compact=True)
 
@@ -247,6 +258,7 @@ class VIMDApp(App):
         )
 
     def _on_recovery_choice(self, choice: str) -> None:
+        chip = self.query_one("#hint-recover")
         if choice == "restore":
             data = getattr(self, "_recovery_data", None)
             if not data:
@@ -255,13 +267,33 @@ class VIMDApp(App):
                         _recovery_path().read_text(encoding="utf-8")
                     )
                 except (OSError, ValueError):
+                    self._recovery_data = None
+                    chip.display = False
                     self.notify("恢复数据不存在", severity="warning")
                     return
             self.query_one(Editor).text = data.get("content", "")
+            self._recovery_data = None
+            chip.display = False
             self.notify("已恢复未保存的内容 (记得保存)")
         elif choice == "discard":
-            self._clear_recovery()
-        # "" (Esc/点外) = 稍后再问, 文件保留, 下次启动再弹
+            self._recovery_data = None
+            chip.display = False
+            # 交给同步器判而非直接删: 底栏按钮让"编辑中途丢弃"可达,
+            # 此时盘上的恢复文件可能已是本轮新改动 (脏 -> 改写, 干净 -> 删)
+            self._sync_recovery_if(self._recovery_gen)
+        else:
+            # "" (Esc/点外/稍后) = 草稿留在内存+落盘, 底栏亮出"恢复"按钮
+            chip.display = True
+
+    def action_recover(self) -> None:
+        """底栏"恢复"按钮: 稍后留下的草稿重弹恢复框。"""
+        if self._recovery_data is None:
+            self.query_one("#hint-recover").display = False
+            return
+        self.push_screen(
+            RecoveryPrompt(self._recovery_data.get("path", "")),
+            self._on_recovery_choice,
+        )
 
     def _apply_mode(self, mode: str) -> None:
         self._mode = mode
@@ -325,6 +357,7 @@ class VIMDApp(App):
             "hint-2": self.action_mode_edit,
             "hint-3": self.action_mode_preview,
             "hint-4": self.action_mode_split,
+            "hint-recover": self.action_recover,
         }
         action = actions.get(event.button.id)
         if action is not None:

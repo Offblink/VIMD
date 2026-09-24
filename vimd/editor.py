@@ -70,9 +70,13 @@ class Editor(TextArea):
             first = segments[0]
             # 只有真正的 gutter 段才重编号: 原生 gutter 恒为 gutter_width 宽
             # (文档末尾之外的视口行没有 gutter, 盲改会把整行内容段砍塌 -> 边框错乱)
+            # y = 屏幕行 (native 用 y_offset = y + scroll_y 定位文档行,
+            # 见 _render_line 头) — 行号必须同样加滚动偏移, 否则滚动时冻结 1..N
             if len(first.text) == self.gutter_width:
                 width = max(self.gutter_width - 2, 0)
-                text = f"{str(y + self.line_number_start):>{width}}  "
+                text = (
+                    f"{str(y + int(self.scroll_y) + self.line_number_start):>{width}}  "
+                )
                 segments[0] = Segment(text, first.style, first.control)
                 strip = Strip(segments, strip.cell_length)
         return strip

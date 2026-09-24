@@ -54,6 +54,9 @@ class VIMDApp(App):
         height: 1; dock: top; background: $panel;
         color: $text-muted; padding: 0 1;
     }
+    #tb-name { width: 1fr; }
+    #tb-title { width: auto; text-align: center; color: $text; }
+    #tb-gap { width: 1fr; }
     #botbar {
         height: 1; dock: bottom; background: $panel;
         color: $text-muted; padding: 0 1;
@@ -118,7 +121,10 @@ class VIMDApp(App):
 
     # ── 组装 ────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
-        yield Static("", id="topbar")
+        with Horizontal(id="topbar"):
+            yield Static("", id="tb-name")
+            yield Static("VIMD", id="tb-title")
+            yield Static("", id="tb-gap")
         with Horizontal(id="body"):
             yield Editor(id="editor")
             with VerticalScroll(id="preview-scroll"):
@@ -251,10 +257,13 @@ class VIMDApp(App):
         )
         name = self.file_path.name if self.file_path else "未命名"
         dirty = "● " if editor.text != self._saved_text else ""
-        self.query_one("#topbar", Static).update(f" {dirty}{name}")
-        self.query_one("#meta", Button).label = (
-            f"{self._mode}  {vis_y + 1}:{col + 1}"
-        )
+        self.query_one("#tb-name", Static).update(f" {dirty}{name}")
+        meta = self.query_one("#meta", Button)
+        meta_label = f"{self._mode}  {vis_y + 1}:{col + 1}"
+        meta.label = meta_label
+        # 实测 Button 宽度锁在挂载值不随 label 重排 -> 显式数字定宽
+        # (meta 文案全 ASCII, 字符数 = 单元格数; +3 = 左右内边距)
+        meta.styles.width = len(meta_label) + 3
 
     # ── 文件操作 ────────────────────────────────────────────
     def _open_file(self, path: Path) -> None:

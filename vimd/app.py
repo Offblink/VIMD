@@ -18,7 +18,7 @@ from pathlib import Path
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import Footer, Header, Static
+from textual.widgets import Static
 
 from .io import FileGuard, read_text_file, write_text_file
 
@@ -49,7 +49,16 @@ class VIMDApp(App):
     #body > Editor, #preview-scroll { width: 100%; }
     #preview-scroll > Preview { width: 100%; }
     #body.m-split > Editor, #body.m-split > #preview-scroll { width: 50%; }
-    #status { height: 1; background: $panel; color: $text-muted; padding: 0 1; }
+    #topbar {
+        height: 1; dock: top; background: $panel;
+        color: $text-muted; padding: 0 1;
+    }
+    #botbar {
+        height: 1; dock: bottom; background: $panel;
+        color: $text-muted; padding: 0 1;
+    }
+    #hints { width: 1fr; }
+    #meta { width: auto; text-align: right; }
     HelpScreen, PathPrompt, QuitConfirm { align: center middle; }
     FindScreen { align: right bottom; }
     ToastRack { dock: top; align: right top; }
@@ -95,13 +104,16 @@ class VIMDApp(App):
 
     # ── 组装 ────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield Static("", id="topbar")
         with Horizontal(id="body"):
             yield Editor(id="editor")
             with VerticalScroll(id="preview-scroll"):
                 yield Preview(id="preview")
-        yield Static("", id="status")
-        yield Footer()
+        with Horizontal(id="botbar"):
+            yield Static(
+                "Ctrl+H 帮助   F2 编辑   F3 预览   F4 分屏", id="hints"
+            )
+            yield Static("", id="meta")
 
     def on_mount(self) -> None:
         mode = self._load_mode()
@@ -190,8 +202,9 @@ class VIMDApp(App):
         row, col = editor.cursor_location
         name = self.file_path.name if self.file_path else "未命名"
         dirty = "● " if editor.text != self._saved_text else ""
-        self.query_one("#status", Static).update(
-            f" {dirty}{name}  ({self._mode})  {row + 1}:{col + 1}"
+        self.query_one("#topbar", Static).update(f" {dirty}{name}")
+        self.query_one("#meta", Static).update(
+            f"{self._mode}  {row + 1}:{col + 1}"
         )
 
     # ── 文件操作 ────────────────────────────────────────────

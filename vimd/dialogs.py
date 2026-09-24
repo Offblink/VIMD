@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from textual import on
 from textual.app import ComposeResult
 from textual.events import Click
@@ -139,3 +141,41 @@ class QuitConfirm(ModalScreen[str]):
     def on_click(self, event: Click) -> None:
         # 点盒外 = 取消退出, 绝不误触保存/丢弃
         self.action_cancel()
+
+
+class RecoveryPrompt(ModalScreen[str]):
+    """上次未正常退出 (含被窗口×强杀) -> 恢复未保存内容?
+
+    返回: "restore" / "discard" / "" (Esc 或点盒外 = 稍后, 下次再问)。
+    """
+
+    BINDINGS = [("escape", "later", "稍后")]
+
+    def __init__(self, source_path: str) -> None:
+        super().__init__()
+        self.source_path = source_path
+
+    def compose(self) -> ComposeResult:
+        shown = (
+            Path(self.source_path).name if self.source_path else "未命名"
+        )
+        with ModalBox(id="recover-box"):
+            yield Static("[bold]发现未保存的更改[/bold]", id="recover-title")
+            yield Static(f"来源: {shown}", id="recover-src")
+            yield Static("上次会话未正常退出，是否恢复？", id="recover-ask")
+            with Horizontal(id="recover-buttons"):
+                yield Button("恢复", id="restore", variant="primary")
+                yield Button("丢弃", id="discard")
+                yield Button("稍后", id="later")
+
+    @on(Button.Pressed)
+    def press(self, event: Button.Pressed) -> None:
+        mapping = {"restore": "restore", "discard": "discard", "later": ""}
+        self.dismiss(mapping.get(event.button.id, ""))
+
+    def on_click(self, event: Click) -> None:
+        # 点盒外 = 稍后 (保留恢复文件, 下次启动再问)
+        self.dismiss("")
+
+    def action_later(self) -> None:
+        self.dismiss("")

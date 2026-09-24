@@ -24,7 +24,7 @@ from textual.widgets import Button, Static
 from .io import FileGuard, read_text_file, write_text_file
 
 from . import formatting
-from .dialogs import HelpScreen, PathPrompt, QuitConfirm
+from .dialogs import HelpScreen, PathPrompt, QuitConfirm, RecoveryPrompt
 from .editor import Editor
 from .find_replace import FindState, FindScreen, find_next as _find_next
 from .preview import Preview
@@ -39,6 +39,19 @@ def _settings_path() -> Path:
     return Path(base) / "VIMD" / "settings.json"
 
 
+def _recovery_path() -> Path:
+    """脏状态恢复日志 — 被强杀(窗口×)后下次启动据此弹恢复框。"""
+    return _settings_path().parent / "recovery.json"
+
+
+class TitleRow(Horizontal):
+    """标题行: ⭘ + VIMD 居中, 整行可点 -> 打开帮助 (复刻原 Header 手感)。"""
+
+    def on_click(self, event) -> None:
+        event.stop()
+        self.app.action_show_help()
+
+
 class VIMDApp(App):
     """VIMD 应用 (VIM + Markdown)。"""
 
@@ -51,12 +64,16 @@ class VIMDApp(App):
     #preview-scroll > Preview { width: 100%; }
     #body.m-split > Editor, #body.m-split > #preview-scroll { width: 50%; }
     #topbar {
-        height: 1; dock: top; background: $panel;
+        height: 1; background: $panel;
         color: $text-muted; padding: 0 1;
     }
+    #title-row {
+        height: 1; background: $panel; color: $text-muted;
+    }
+    #title-row #tr-icon { width: 3; }
+    #title-row #tr-title { width: 1fr; text-align: center; color: $text; }
+    #title-row #tr-pad { width: 3; }
     #tb-name { width: 1fr; }
-    #tb-title { width: auto; text-align: center; color: $text; }
-    #tb-gap { width: 1fr; }
     #botbar {
         height: 1; dock: bottom; background: $panel;
         color: $text-muted; padding: 0 1;
@@ -78,7 +95,7 @@ class VIMDApp(App):
     HelpScreen, PathPrompt, QuitConfirm { align: center middle; }
     FindScreen { align: right bottom; }
     ToastRack { dock: top; align: right top; }
-    #help-box, #prompt-box, #quit-box {
+    #help-box, #prompt-box, #quit-box, #recover-box {
         width: 76; height: auto; max-height: 90%;
         padding: 1 2; background: $surface; border: thick $accent;
     }
@@ -118,13 +135,17 @@ class VIMDApp(App):
         self._preview_gen = 0  # 防抖代数计数
         self.find_state = FindState()  # 查找状态跨弹窗存续
         self.show_line_numbers = True  # 帮助弹窗内可切换 (CaseCheckbox 同款 UX)
+        self._recovery_gen = 0
+        self._recovery_data: dict | None = None
 
     # ── 组装 ────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
+        with TitleRow(id="title-row"):
+            yield Static("⭘", id="tr-icon")
+            yield Static("VIMD", id="tr-title")
+            yield Static("", id="tr-pad")
         with Horizontal(id="topbar"):
             yield Static("", id="tb-name")
-            yield Static("VIMD", id="tb-title")
-            yield Static("", id="tb-gap")
         with Horizontal(id="body"):
             yield Editor(id="editor")
             with VerticalScroll(id="preview-scroll"):
@@ -157,6 +178,7 @@ class VIMDApp(App):
                 self.query_one(Preview).doc_dir = p.parent
         self._apply_mode(mode)
         self.refresh_status()
+        self._check_recovery()
 
     # ── 设置持久化 ──────────────────────────────────────────
     def _load_mode(self) -> str:
@@ -180,6 +202,67 @@ class VIMDApp(App):
             pass  # 设置写不进去不影响编辑
 
     # ── 视图模式 ────────────────────────────────────────────
+    # ── 恢复日志 (脏内容保命: 窗口×杀不死它) ────────────────
+    def _clear_recovery(self) -> None:
+        try:
+            _recovery_path().unlink()
+        except OSError:
+            pass
+
+    def _sync_recovery_if(self, gen: int) -> None:
+        """防抖到期仍是脏态 -> 落盘恢复文件; 已干净 -> 删除。"""
+        if gen != self._recovery_gen:
+            return
+        text = self.query_one(Editor).text
+        if text != self._saved_text:
+            payload = {
+                "path": str(self.file_path) if self.file_path else "",
+                "content": text,
+            }
+            try:
+                _recovery_path().write_text(
+                    json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+                )
+            except OSError:
+                pass
+        else:
+            self._clear_recovery()
+
+    def _check_recovery(self) -> None:
+        rp = _recovery_path()
+        if not rp.exists():
+            return
+        try:
+            data = json.loads(rp.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        content = data.get("content", "")
+        if content == self.query_one(Editor).text:
+            self._clear_recovery()  # 内容一致 = 没有真正丢失的东西
+            return
+        # 缓存在内存: 回调时文件可能已被启动流程清掉, 不再二次读盘
+        self._recovery_data = data
+        self.push_screen(
+            RecoveryPrompt(data.get("path", "")), self._on_recovery_choice
+        )
+
+    def _on_recovery_choice(self, choice: str) -> None:
+        if choice == "restore":
+            data = getattr(self, "_recovery_data", None)
+            if not data:
+                try:
+                    data = json.loads(
+                        _recovery_path().read_text(encoding="utf-8")
+                    )
+                except (OSError, ValueError):
+                    self.notify("恢复数据不存在", severity="warning")
+                    return
+            self.query_one(Editor).text = data.get("content", "")
+            self.notify("已恢复未保存的内容 (记得保存)")
+        elif choice == "discard":
+            self._clear_recovery()
+        # "" (Esc/点外) = 稍后再问, 文件保留, 下次启动再弹
+
     def _apply_mode(self, mode: str) -> None:
         self._mode = mode
         body = self.query_one("#body", Horizontal)
@@ -213,6 +296,9 @@ class VIMDApp(App):
         self._preview_gen += 1
         gen = self._preview_gen
         self.set_timer(PREVIEW_DEBOUNCE, lambda: self._render_if(gen))
+        self._recovery_gen += 1
+        rgen = self._recovery_gen
+        self.set_timer(0.5, lambda: self._sync_recovery_if(rgen))
         self.refresh_status()
 
     def on_text_area_selection_changed(self, event) -> None:
@@ -273,6 +359,9 @@ class VIMDApp(App):
         editor = self.query_one(Editor)
         editor.text = content
         self._saved_text = content
+        # 加载触发的 Changed 会排一个"文本==已存 -> 删恢复文件"的定时器,
+        # 会把待恢复的日志误删 — 作废它
+        self._recovery_gen += 1
         preview = self.query_one(Preview)
         preview.doc_dir = path.parent
         preview.update(content)
@@ -311,6 +400,7 @@ class VIMDApp(App):
         text = self.query_one(Editor).text
         write_text_file(self.file_path, text)
         self._saved_text = text
+        self._clear_recovery()
         self.refresh_status()
         self.notify(f"已保存 {self.file_path.name}")
 
@@ -382,6 +472,7 @@ class VIMDApp(App):
                 # 未命名文档: 系统另存为, 取消则放弃退出
                 asyncio.create_task(self._quit_via_save_as())
         elif choice == "discard":
+            self._clear_recovery()
             self.exit()
 
     async def _save_and_exit(self) -> None:

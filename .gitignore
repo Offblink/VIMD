@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 .ruff_cache/
+build/
+dist/
+.venv-build/

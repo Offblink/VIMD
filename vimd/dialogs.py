@@ -15,7 +15,7 @@ HELP_TEXT = """\
 
   [cyan]视图[/cyan]   F2 编辑 · F3 预览 · F4 分屏
   [cyan]文件[/cyan]   Ctrl+S 保存 · Ctrl+Shift+S 另存为 · Ctrl+O 打开
-  [cyan]格式[/cyan]   Ctrl+B 加粗 · Alt+I 斜体 · Ctrl+K 代码块 · Ctrl+L 链接 · Ctrl+Shift+L 图片
+  [cyan]格式[/cyan]   Ctrl+B 加粗 · Ctrl+I 斜体 · Ctrl+K 代码块 · Ctrl+L 链接 · Ctrl+Shift+L 图片
   [cyan]查找[/cyan]   Ctrl+F 弹窗 · Enter 下一个 · Shift+Enter 上一个
   [cyan]其他[/cyan]   Ctrl+Z/Y 撤销重做 · Ctrl+H 帮助 · Ctrl+Q 退出
 

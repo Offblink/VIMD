@@ -33,13 +33,13 @@ python vimd.py 文档.md
 |---|---|---|
 | 文件 | 保存 / 另存为 / 打开 | Ctrl+S / Ctrl+Shift+S / Ctrl+O |
 | 视图 | 编辑 / 预览 / 分屏 | F2 / F3 / F4 |
-| 格式 | 加粗 / 斜体 / 代码块 / 链接 / 内嵌图片 | Ctrl+B / Alt+I / Ctrl+K / Ctrl+L / Ctrl+Shift+L |
+| 格式 | 加粗 / 斜体 / 代码块 / 链接 / 内嵌图片 | Ctrl+B / Ctrl+I / Ctrl+K / Ctrl+L / Ctrl+Shift+L |
 | 查找 | 弹窗 / 下一个 / 上一个 | Ctrl+F / Enter 或 Ctrl+G / Ctrl+Shift+G |
 | 编辑 | 撤销 / 重做 | Ctrl+Z / Ctrl+Y |
 | 其他 | 帮助 / 退出 | Ctrl+H / Ctrl+Q |
 
 ## 说明
 
-- **斜体用 `Alt+I`**：`Ctrl+I` 在终端协议里与 TAB 是同一个字节（0x09），物理上无法区分；`Ctrl+I` 也一并绑定，在支持 kitty 键盘协议的终端可用
+- **斜体 = `Ctrl+I`**：textual 启动时启用 kitty 键盘协议（`windows_driver` 发 `\x1b[>1u`），Windows Terminal 1.24 下 Ctrl+I 以独立序列送达、与 Tab 分开；不支持该协议的老终端里 Ctrl+I 退化为 Tab，此时用兜底键 `Alt+I`（已一并绑定）
 - **中文输入**：IME 由 Windows Terminal 在终端层处理，组词完成后整词上屏
 - **语法高亮**：安装对应 tree-sitter markdown 语法包后编辑区自动启用，未装则纯文本（不影响预览渲染，与 GUI 版持平）

@@ -134,10 +134,10 @@ def replace_current(editor: Editor, state: FindState, notify=None) -> None:
 
 
 class CaseCheckbox(Checkbox):
-    """区分大小写勾选框: 开 = √ (success 绿), 关 = ×。
+    """区分大小写勾选框: 开 = √ (success 绿), 关 = 留空。
 
     ToggleButton 的 BUTTON_INNER 恒为 "X", 两种状态只换颜色 —
-    这里按状态换字形。
+    这里按状态换字形: 关态不显示叉, 直接留空。
     """
 
     @property
@@ -147,7 +147,7 @@ class CaseCheckbox(Checkbox):
             foreground=button_style.background,
             background=self.background_colors[1],
         )
-        inner = "√" if self.value else "×"
+        inner = "√" if self.value else " "
         return Content.assemble(
             (self.BUTTON_LEFT, side_style),
             (inner, button_style),

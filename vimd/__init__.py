@@ -1,3 +1,3 @@
 """VIMD — 基于 Textual 的终端 Markdown 编辑器 (VIM + MD)。"""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

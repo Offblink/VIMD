@@ -29,6 +29,7 @@ from .dialogs import HelpScreen, PathPrompt, QuitConfirm, RecoveryPrompt
 from .editor import Editor
 from .find_replace import FindState, FindScreen, find_next as _find_next
 from .preview import Preview
+from .singleton import DocClaim, singleton_key
 from .sysdialog import system_open_file_dialog, system_save_file_dialog
 
 MODES = ("edit", "preview", "split")
@@ -273,11 +274,15 @@ class VIMDApp(App):
         Binding("ctrl+q", "request_quit", "退出"),
     ]
 
-    def __init__(self, path: str | None = None) -> None:
+    def __init__(self, path: str | None = None,
+                 claim: DocClaim | None = None) -> None:
         super().__init__()
         self.path_arg = path
         self.file_path: Path | None = None
         self.file_guard = FileGuard()
+        # 单例登记 (哪个窗口开着哪个文件): 入口 (vimd/tui.py) 先判过一遍,
+        # 这里接住它; 直接构造 app 的场景 (pilot/测试) 自己新建一个
+        self.claim = claim if claim is not None else DocClaim()
         self._saved_text = ""
         self._mode = "edit"
         self._preview_gen = 0  # 防抖代数计数
@@ -320,14 +325,25 @@ class VIMDApp(App):
         if self.path_arg:
             p = Path(self.path_arg)
             if p.exists():
-                self._open_file(p)
+                self._open_file(p)  # 里头会把单例登记换到这个文件
             else:
                 # 新文件: 记住路径, 保存时创建
                 self.file_path = p
                 self.query_one(Preview).doc_dir = p.parent
+                self._claim_doc(p)  # 还没落盘也要登记: 同名再开 -> 抬这个窗口
+        else:
+            self._claim_doc(None)  # 未命名文档也各占一个键
         self._apply_mode(mode)
         self.refresh_status()
         self._check_recovery()
+
+    def on_unmount(self) -> None:
+        """退出 (含 Ctrl+Q / 窗口× / run_test 收尾): 放掉单例登记。
+
+        进程被杀时内核也会兜底回收, 但正常退出就别等人来清 —— 否则紧接着
+        重开同一个文件会被判成"还开着"。
+        """
+        self.claim.release()
 
     # ── 设置持久化 ──────────────────────────────────────────
     def _load_mode(self) -> str:
@@ -557,6 +573,24 @@ class VIMDApp(App):
         meta.styles.width = len(meta_label) + 3
 
     # ── 文件操作 ────────────────────────────────────────────
+    def _claim_doc(self, path: Path | None) -> None:
+        """登记"本窗口开着哪个文件" —— 单例判定的依据, 换文件就跟着换。
+
+        别人已经开着同一个文件时: 本窗口照常编辑 (不拦, 拦了反而更意外), 但不
+        登记 —— 登记会把对面从单例表里顶掉, 以后双击这个文件就开到这里来了。
+        提醒一句就够了: 两个窗口同时保存同一个文件会互相覆盖。
+
+        (正常双击路径轮不到这条: 启动器发现重复时根本不建窗口。能走到这儿的是
+        "直接跑 VIMD-tui.exe"、源码运行、以及单例表刚被抢走的窄窗口。)
+        """
+        if self.claim.claim(singleton_key(path)):
+            return
+        name = path.name if path else "未命名"
+        self.notify(
+            f"{name} 已在另一个 VIMD 窗口打开, 两边同时保存会互相覆盖",
+            severity="warning", timeout=8,
+        )
+
     def _open_file(self, path: Path) -> None:
         # 换文件: 旧文件的脏内容立即写进它自己的条目 (不等 0.5s 防抖),
         # 旧文件的"稍后"提示态收回 — 草稿仍在盘上, 重开那个文件再问
@@ -565,6 +599,7 @@ class VIMDApp(App):
         content = read_text_file(path)
         self.file_path = path
         self.file_guard.acquire(str(path))
+        self._claim_doc(path)
         editor = self.query_one(Editor)
         editor.text = content
         self._saved_text = content
@@ -649,6 +684,7 @@ class VIMDApp(App):
         self.file_path = path
         self.query_one(Preview).doc_dir = path.parent
         self.file_guard.acquire(str(path))
+        self._claim_doc(path)
         return True
 
     # ── 新建 (Ctrl+N): 脏态先问, 保存链镜像退出链 ──────────
@@ -671,6 +707,7 @@ class VIMDApp(App):
     def _do_new(self) -> None:
         self.file_path = None
         self.file_guard.release()
+        self._claim_doc(None)  # 未命名缓冲: 键 ""
         editor = self.query_one(Editor)
         editor.text = ""
         self._saved_text = ""

@@ -149,6 +149,32 @@ def normalize_dests(text: str) -> str:
     return "".join(parts)
 
 
+def _line_starts(text: str) -> list[int]:
+    """每行行首的字符下标 (第 i 行 = text[starts[i]:starts[i+1]], 末行到 len(text))。
+
+    增量比对的键要拿"块自己的那段源文本", 而 markdown-it 给的 `source_range` 是
+    **行号**。行号当字符下标去切片会错位: 只要这次编辑改了行数 (Ctrl+X 删整行 /
+    回车 / 多行粘贴), 被编辑位置以下的每个块切出来的都是错开的字符窗口, 首尾公共段
+    比对当场崩掉 → 半篇重建 (实测 321 块测出 拆 160 / 挂 160, 单次 800ms, 这就是
+    「Ctrl+X 特别慢」: 删行正是改行数的编辑; 行内打字/退格不改行数, 所以一直不卡)。
+    先把行号换成字符下标, 键才是块的真实源文本, 行号平移不再影响比对。
+    """
+    starts = [0]
+    index = text.find("\n")
+    while index != -1:
+        starts.append(index + 1)
+        index = text.find("\n", index + 1)
+    return starts
+
+
+def _block_text(body: str, starts: list[int], start_line: int, end_line: int) -> str:
+    """按行号取块源文本; 行号越界 (token.map 缺失 / 末行) 时取空串。"""
+    lines = len(starts)
+    start = starts[start_line] if 0 <= start_line < lines else len(body)
+    end = starts[end_line] if 0 <= end_line < lines else len(body)
+    return body[start:end] if end > start else ""
+
+
 class Preview(Markdown):
     """实时预览面板。"""
 
@@ -158,6 +184,7 @@ class Preview(Markdown):
         self.doc_dir: Path = Path.cwd()
         self._source: str | None = None  # 上次喂给渲染的原文 (同文去重)
         self._body: str | None = None  # 上次真正渲染的归一化文本 (增量比对用)
+        self._body_starts: list[int] = []  # _body 的行首下标表 (比对键要用)
         self._parser = MarkdownIt("gfm-like")  # 复用: 每次新建实测要 ~30ms
         self._line_offset = 0  # 截断提示插在正文前的行数 (源码行 → 渲染行)
 
@@ -241,28 +268,33 @@ class Preview(Markdown):
     def _update_incremental(self, body: str):
         """只重挂"内容变了的那些块", 其余复用 — 全量重建实测 250-1040ms/次 (241 块)。
 
-        块的渲染只取决于它自己的那段 markdown, 所以拿 (块类型, 该块源文本切片) 做
-        首尾公共段比对 (不含行号: 上面插一行会让后面所有块的行号平移, 但内容没变,
-        复用后把新行号刷回去即可)。比对走 token, 不给没变的块建控件 — 建 241 个块
-        控件本身就要 ~40ms, 白建就等于没省。
+        块的渲染只取决于它自己的那段 markdown, 所以拿 (块类型, 该块源文本) 做首尾公共
+        段比对 (键里不含行号: 上面插一行会让后面所有块的行号平移, 但内容没变; 复用后
+        把新行号刷回去即可)。源文本按行号→字符下标取 (见 `_line_starts`: 直接拿行号
+        当字符下标会错位, 改行数的编辑 —— 删整行 / 回车 / 多行粘贴 —— 会退化成半篇重建)。
+        比对走 token, 不给没变的块建控件 — 建 241 个块控件本身就要 ~40ms, 白建就等于没省。
         首渲染 / 空文档 / 拿不到旧块时退回 Textual 的全量重建。
         """
         previous, old_blocks = self._body, list(self.children)
+        prev_starts = self._body_starts
         self._body = body
         if previous is None or not old_blocks:
+            self._body_starts = _line_starts(body)
             return super().update(body)
         tokens = list(self._parser.parse(body))
         groups = self._top_blocks(tokens)
+        starts = _line_starts(body)
+        self._body_starts = starts
         self._markdown = body
         self._table_of_contents = None
 
         def old_key(block: MarkdownBlock) -> tuple[str, str]:
             start, end = block.source_range
-            return block.name, previous[start:end]
+            return block.name, _block_text(previous, prev_starts, start, end)
 
         def new_key(group: tuple[str, int, int, int, int]) -> tuple[str, str]:
             name, start, end, _, _ = group
-            return name, body[start:end]
+            return name, _block_text(body, starts, start, end)
 
         old_keys = [old_key(b) for b in old_blocks]
         new_keys = [new_key(g) for g in groups]

@@ -59,6 +59,78 @@ def open_href(href: str, doc_dir: Path, notify) -> None:
 
 _SPACE_DEST = re.compile(r"\]\((?!<)([^)\n]* [^)\n]*)\)")
 
+# 链接/图片: [text](dest) 与 ![alt](dest), dest 可能已被 normalize_dests 包成 <...>
+_LINK_RE = re.compile(r"(!?)\[([^\]]*)\]\((<[^>]*>|[^()\s]*)\)")
+
+# 本地文件类型 -> emoji (目录单独判)
+_EMOJI_BY_SUFFIX = {
+    ".png": "🖼️", ".jpg": "🖼️", ".jpeg": "🖼️", ".gif": "🖼️", ".bmp": "🖼️",
+    ".webp": "🖼️", ".svg": "🖼️", ".ico": "🖼️", ".avif": "🖼️",
+    ".md": "📝", ".txt": "📄", ".log": "📄",
+    ".pdf": "📕", ".doc": "📃", ".docx": "📃", ".rtf": "📃",
+    ".xls": "📊", ".xlsx": "📊", ".csv": "📊",
+    ".ppt": "📽️", ".pptx": "📽️",
+    ".zip": "📦", ".7z": "📦", ".rar": "📦", ".tar": "📦", ".gz": "📦",
+    ".mp4": "🎬", ".mkv": "🎬", ".avi": "🎬", ".mov": "🎬", ".webm": "🎬",
+    ".mp3": "🎵", ".wav": "🎵", ".flac": "🎵", ".ogg": "🎵", ".m4a": "🎵",
+    ".py": "💻", ".js": "💻", ".ts": "💻", ".java": "💻", ".c": "💻",
+    ".cpp": "💻", ".html": "💻", ".css": "💻", ".json": "📋", ".xml": "📋",
+    ".sh": "💻", ".bat": "💻", ".ps1": "💻",
+}
+
+
+def _is_local_dest(dest: str) -> bool:
+    """目的地是本地文件/目录 (盘符、UNC、file:、无 scheme 相对路径) 还是网址。"""
+    if not dest or dest.startswith("#"):
+        return False
+    if re.match(r"^[A-Za-z]:", dest):  # C:\ C:/ C:relative
+        return True
+    if dest.lower().startswith("file:"):
+        return True
+    if dest.startswith("\\\\"):  # UNC
+        return True
+    return urlparse(dest).scheme == ""
+
+
+def dest_emoji(dest: str, doc_dir: Path) -> str:
+    """本地目的地 -> 类型 emoji: 目录 📁, 按后缀映射, 未知后缀/无后缀 📄。"""
+    if dest.endswith(("/", "\\")):
+        return "📁"
+    p = Path(dest)
+    if not p.is_absolute():
+        p = Path(doc_dir) / p
+    try:
+        if p.is_dir():
+            return "📁"
+    except OSError:
+        pass
+    suffix = p.suffix.lower()
+    if suffix in _EMOJI_BY_SUFFIX:
+        return _EMOJI_BY_SUFFIX[suffix]
+    if suffix:
+        return "📄"
+    # 无后缀: 磁盘上是文件给 📄, 猜不到按目录给 📁
+    return "📄" if p.is_file() else "📁"
+
+
+def linkify_local_dests(text: str, doc_dir: Path) -> str:
+    """[]()/![]() 指向本地文件/目录 -> 统一显示类型 emoji; 网址/锚点原样。
+
+    URL 规则不变 (点击走浏览器); 本地目的地点击仍走系统程序"跳转"。
+    只改显示, 目的地原样保留 (含 <...> 包裹), 代码围栏内不动。
+    """
+    def repl(m: re.Match) -> str:
+        dest = m.group(3)
+        inner = dest[1:-1] if dest.startswith("<") else dest
+        if not inner.strip() or not _is_local_dest(inner):
+            return m.group(0)
+        return f"[{dest_emoji(inner, doc_dir)}]({dest})"
+
+    parts = re.split(r"(```.*?```)", text, flags=re.S)
+    for i in range(0, len(parts), 2):  # 偶数段 = 围栏之外
+        parts[i] = _LINK_RE.sub(repl, parts[i])
+    return "".join(parts)
+
 
 def normalize_dests(text: str) -> str:
     """把带空格的链接/图片目的地包成 CommonMark 尖括号形式。
@@ -101,4 +173,6 @@ class Preview(Markdown):
                 f"预览仅渲染前 {len(cut)} 字符 (编辑与保存不受影响)\n\n"
             )
             body = notice + cut
-        return super().update(normalize_dests(body))
+        # 顺序: 先包空格目的地, 再把本地文件/目录链接统一成类型 emoji
+        return super().update(linkify_local_dests(normalize_dests(body),
+                                                  self.doc_dir))

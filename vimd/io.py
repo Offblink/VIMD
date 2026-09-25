@@ -1,7 +1,11 @@
 """文件读写、文件锁与 HTML 导出。"""
 import os
+import re
 
 import markdown
+
+# 拖进 WT 的路径形如 "C:\a b\x.md" (绝对路径包引号)
+_QUOTED_DROP = re.compile(r'^"(?:[A-Za-z]:[\\/]|\\\\)')
 
 # 读取时尝试的编码顺序
 READ_ENCODINGS = ['utf-8', 'gbk', 'gb2312', 'gb18030', 'big5', 'latin-1']
@@ -73,6 +77,17 @@ EXPORT_HTML_TEMPLATE = """<!DOCTYPE html>
     {html_content}
 </body>
 </html>"""
+
+
+def unquote_dropped_path(text):
+    """WT 拖入文件/目录会给绝对路径包引号 -> 去掉每段引号。
+
+    仅当整段以 `"盘符:\\` 或 `"\\\\` (UNC) 开头才处理, 避免误伤正常引用文本;
+    多文件拖入形如 `"C:\\a.md" "C:\\b c.md"` -> 逐段去引号空格相连。
+    """
+    if _QUOTED_DROP.match(text):
+        return re.sub(r'"([^"\r\n]*)"', r'\1', text)
+    return text
 
 
 def read_text_file(file_path):

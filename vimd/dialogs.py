@@ -87,6 +87,16 @@ class HelpScreen(ModalScreen[None]):
         self.app.set_line_numbers(event.value)
 
 
+class PathInput(Input):
+    """路径输入框: 拖入 WT 的带引号路径落地前去引号。"""
+
+    def _on_paste(self, event) -> None:
+        from .io import unquote_dropped_path
+
+        event.text = unquote_dropped_path(event.text)
+        super()._on_paste(event)
+
+
 class PathPrompt(ModalScreen[str | None]):
     """打开 / 另存为的路径输入。"""
 
@@ -100,7 +110,7 @@ class PathPrompt(ModalScreen[str | None]):
     def compose(self) -> ComposeResult:
         with ModalBox(id="prompt-box"):
             yield Static(self.title_text, id="prompt-title")
-            yield Input(value=self.initial, id="path-input")
+            yield PathInput(value=self.initial, id="path-input")
             yield Static("[dim]Enter 确认 · Esc 取消[/dim]")
 
     def on_mount(self) -> None:

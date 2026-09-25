@@ -31,7 +31,9 @@ from .preview import Preview
 from .sysdialog import system_open_file_dialog, system_save_file_dialog
 
 MODES = ("edit", "preview", "split")
-PREVIEW_DEBOUNCE = 0.2  # 秒; 与 GUI 版 v1.3.0 同思路: 连续输入合并渲染
+PREVIEW_DEBOUNCE = 0.4  # 秒; GUI 版 v1.3.0 用 0.2, 但 Textual 版全量重建
+# 实测单次 ~100-400ms 且分段阻塞事件循环 (打字停顿 0.2-0.5s 是词间常态,
+# 0.2 阈值 = 几乎每写一个词就重建一次, 续打撞上阻塞就"卡一下")
 
 
 def _settings_path() -> Path:
@@ -42,6 +44,54 @@ def _settings_path() -> Path:
 def _recovery_path() -> Path:
     """脏状态恢复日志 — 被强杀(窗口×)后下次启动据此弹恢复框。"""
     return _settings_path().parent / "recovery.json"
+
+
+def _recovery_key(file_path: Path | None) -> str:
+    """恢复条目键: 归一化绝对路径 (未命名 = "")。
+
+    不同文件各存各的草稿 — 否则打开文件 B 会拿文件 A 的草稿弹恢复框,
+    选恢复就把 A 的内容盖进 B (T0 数据丢失)。
+    """
+    if file_path is None:
+        return ""
+    return os.path.normcase(os.path.abspath(str(file_path)))
+
+
+def _load_recovery() -> dict[str, dict]:
+    """读恢复日志 → {key: {path, content}}; 兼容 v0.1.x 单条旧格式。"""
+    try:
+        data = json.loads(_recovery_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    entries = data.get("entries")
+    if isinstance(entries, dict):
+        return {k: v for k, v in entries.items() if isinstance(v, dict)}
+    # 旧版: 单条 {path, content} — 按其 path 归入对应文件的条目
+    if isinstance(data.get("content"), str):
+        p = data.get("path") or ""
+        return {
+            _recovery_key(Path(p) if p else None): {"path": p,
+                                                    "content": data["content"]}
+        }
+    return {}
+
+
+def _store_recovery(entries: dict[str, dict]) -> None:
+    """写恢复日志; 无条目时删文件。"""
+    try:
+        rp = _recovery_path()
+        if not entries:
+            rp.unlink()
+        else:
+            rp.parent.mkdir(parents=True, exist_ok=True)
+            rp.write_text(
+                json.dumps({"entries": entries}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+    except OSError:
+        pass  # 写不进去不影响编辑
 
 
 class TitleRow(Horizontal):
@@ -213,65 +263,85 @@ class VIMDApp(App):
         except OSError:
             pass  # 设置写不进去不影响编辑
 
-    # ── 视图模式 ────────────────────────────────────────────
-    # ── 恢复日志 (脏内容保命: 窗口×杀不死它) ────────────────
+    # ── 恢复日志 (脏内容保命: 窗口×杀不死它; 按文件分条) ────
     def _clear_recovery(self) -> None:
-        try:
-            _recovery_path().unlink()
-        except OSError:
-            pass
+        """只删当前文件的条目 — 其它文件的草稿不许动。"""
+        key = _recovery_key(self.file_path)
+        entries = _load_recovery()
+        if key in entries:
+            del entries[key]
+            _store_recovery(entries)
+
+    def _flush_recovery(self) -> None:
+        """切换文件前把当前脏内容立即写入它自己的条目 (不等 0.5s 防抖)。"""
+        text = self.query_one(Editor).text
+        if text == self._saved_text:
+            return
+        entries = _load_recovery()
+        entries[_recovery_key(self.file_path)] = {
+            "path": str(self.file_path) if self.file_path else "",
+            "content": text,
+        }
+        _store_recovery(entries)
 
     def _sync_recovery_if(self, gen: int) -> None:
-        """防抖到期仍是脏态 -> 落盘恢复文件; 已干净 -> 删除。"""
+        """防抖到期: 脏 -> 写当前文件的条目; 干净 -> 删当前文件的条目。
+
+        干净态删除仅在没有待决恢复框时执行 — 启动加载触发的
+        "文本==已存" 定时器会晚于恢复框 0.5s 到期, 不拦就把
+        刚弹出的草稿从盘上删了 (选"稍后"后重启再也问不到)。
+        """
         if gen != self._recovery_gen:
             return
+        key = _recovery_key(self.file_path)
+        entries = _load_recovery()
         text = self.query_one(Editor).text
         if text != self._saved_text:
-            payload = {
+            entries[key] = {
                 "path": str(self.file_path) if self.file_path else "",
                 "content": text,
             }
-            try:
-                _recovery_path().write_text(
-                    json.dumps(payload, ensure_ascii=False), encoding="utf-8"
-                )
-            except OSError:
-                pass
-        else:
-            self._clear_recovery()
+            _store_recovery(entries)
+        elif key in entries and self._recovery_data is None:
+            del entries[key]
+            _store_recovery(entries)
 
     def _check_recovery(self) -> None:
-        rp = _recovery_path()
-        if not rp.exists():
+        """当前文件有自己的草稿才弹恢复框; 已有待决框则不叠。"""
+        if self._recovery_data is not None:
             return
-        try:
-            data = json.loads(rp.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        entry = _load_recovery().get(_recovery_key(self.file_path))
+        if entry is None:
             return
-        content = data.get("content", "")
+        content = entry.get("content", "")
         if content == self.query_one(Editor).text:
             self._clear_recovery()  # 内容一致 = 没有真正丢失的东西
             return
-        # 缓存在内存: 回调时文件可能已被启动流程清掉, 不再二次读盘
-        self._recovery_data = data
+        # 缓存在内存: 回调时盘上条目可能已被清掉, 不再二次读盘
+        self._recovery_data = entry
         self.push_screen(
-            RecoveryPrompt(data.get("path", "")), self._on_recovery_choice
+            RecoveryPrompt(entry.get("path", "")), self._on_recovery_choice
         )
+
+    def _reset_recovery_prompt(self) -> None:
+        """换文件/新建: 旧文件的"稍后"缓存与底栏按钮收回。
+
+        草稿仍在盘上自己的条目里 — 重新打开那个文件会再问。
+        """
+        self._recovery_data = None
+        self.query_one("#hint-recover").display = False
 
     def _on_recovery_choice(self, choice: str) -> None:
         chip = self.query_one("#hint-recover")
         if choice == "restore":
-            data = getattr(self, "_recovery_data", None)
+            data = self._recovery_data
             if not data:
-                try:
-                    data = json.loads(
-                        _recovery_path().read_text(encoding="utf-8")
-                    )
-                except (OSError, ValueError):
-                    self._recovery_data = None
-                    chip.display = False
-                    self.notify("恢复数据不存在", severity="warning")
-                    return
+                data = _load_recovery().get(_recovery_key(self.file_path))
+            if not data:
+                self._recovery_data = None
+                chip.display = False
+                self.notify("恢复数据不存在", severity="warning")
+                return
             self.query_one(Editor).text = data.get("content", "")
             self._recovery_data = None
             chip.display = False
@@ -280,7 +350,7 @@ class VIMDApp(App):
             self._recovery_data = None
             chip.display = False
             # 交给同步器判而非直接删: 底栏按钮让"编辑中途丢弃"可达,
-            # 此时盘上的恢复文件可能已是本轮新改动 (脏 -> 改写, 干净 -> 删)
+            # 此时盘上的条目可能已是本轮新改动 (脏 -> 改写, 干净 -> 删)
             self._sync_recovery_if(self._recovery_gen)
         else:
             # "" (Esc/点外/稍后) = 草稿留在内存+落盘, 底栏亮出"恢复"按钮
@@ -339,8 +409,15 @@ class VIMDApp(App):
         self.refresh_status()
 
     def _render_if(self, gen: int) -> None:
-        if gen == self._preview_gen:
-            self._render_preview_now()
+        if gen != self._preview_gen:
+            return
+        # 编辑视图 (F2): 预览隐藏却仍会全量重建 — 实测单次几百 ms CPU 且
+        # 分段阻塞事件循环 ~100ms, 打字停顿后立刻卡一下, 纯浪费。
+        # 切到 F3/F4 时 _apply_mode 会立即补渲染, 内容不丢。
+        scroll = self.query_one("#preview-scroll", VerticalScroll)
+        if not scroll.display:
+            return
+        self._render_preview_now()
 
     def _render_preview_now(self) -> None:
         self.query_one(Preview).update(self.query_one(Editor).text)
@@ -387,6 +464,10 @@ class VIMDApp(App):
 
     # ── 文件操作 ────────────────────────────────────────────
     def _open_file(self, path: Path) -> None:
+        # 换文件: 旧文件的脏内容立即写进它自己的条目 (不等 0.5s 防抖),
+        # 旧文件的"稍后"提示态收回 — 草稿仍在盘上, 重开那个文件再问
+        self._flush_recovery()
+        self._reset_recovery_prompt()
         content = read_text_file(path)
         self.file_path = path
         self.file_guard.acquire(str(path))
@@ -424,6 +505,7 @@ class VIMDApp(App):
             path = path / "未命名.md"
         if path.is_file():
             self._open_file(path)
+            self._check_recovery()  # 这个文件有自己的草稿才弹
         else:
             self.notify(f"文件不存在: {path}", severity="warning")
 
@@ -466,6 +548,8 @@ class VIMDApp(App):
         path = Path(value)
         if not path.suffix:
             path = path.with_suffix(".md")
+        # 缓冲归属换了文件: 旧文件的草稿留在盘上自己的条目里, 提示态收回
+        self._reset_recovery_prompt()
         self.file_path = path
         self.query_one(Preview).doc_dir = path.parent
         self.file_guard.acquire(str(path))
@@ -497,6 +581,9 @@ class VIMDApp(App):
         preview = self.query_one(Preview)
         preview.doc_dir = Path.cwd()
         preview.update("")
+        # 旧文件的提示态收回; 新缓冲 = 键 "", 有自己的草稿才再问
+        self._reset_recovery_prompt()
+        self._check_recovery()
         self.refresh_status()
         self.notify("已新建文件")
 

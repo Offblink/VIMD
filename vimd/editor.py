@@ -14,6 +14,7 @@ from textual.widgets import TextArea
 from textual.widgets._text_area import LanguageDoesNotExist
 
 from . import formatting
+from .io import unquote_dropped_path
 
 
 def _markdown_language_or_none() -> str | None:
@@ -35,6 +36,11 @@ class Editor(TextArea):
             soft_wrap=True,
             **kwargs,
         )
+
+    async def _on_paste(self, event) -> None:
+        """拖入 WT 的路径带引号 -> 落编辑器前去掉 (见 io.unquote_dropped_path)。"""
+        event.text = unquote_dropped_path(event.text)
+        await super()._on_paste(event)
 
     def on_key(self, event) -> None:
         """TextArea 默认占用的两个键在此拦截:

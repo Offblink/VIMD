@@ -19,6 +19,8 @@ import webbrowser
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from markdown_it import MarkdownIt
+from textual.await_complete import AwaitComplete
 from textual.widgets import Markdown
 from textual.widgets.markdown import MarkdownBlock
 
@@ -155,6 +157,8 @@ class Preview(Markdown):
         self.can_focus = True  # 预览模式下接管键盘焦点
         self.doc_dir: Path = Path.cwd()
         self._source: str | None = None  # 上次喂给渲染的原文 (同文去重)
+        self._body: str | None = None  # 上次真正渲染的归一化文本 (增量比对用)
+        self._parser = MarkdownIt("gfm-like")  # 复用: 每次新建实测要 ~30ms
         self._line_offset = 0  # 截断提示插在正文前的行数 (源码行 → 渲染行)
 
     def on_markdown_link_clicked(self, event: Markdown.LinkClicked) -> None:
@@ -193,7 +197,7 @@ class Preview(Markdown):
         return hit, min(max((target - start) / (end - start), 0.0), 1.0)
 
     def update(self, markdown: str):
-        """同文去重 + 超长截断 (PREVIEW_MAX) + 归一化空格目的地。"""
+        """同文去重 + 超长截断 (PREVIEW_MAX) + 归一化, 然后**增量重建**。"""
         if markdown == self._source:
             # 打开时显式渲染过, Changed 防抖又来一次: 同文重建纯属浪费
             return None
@@ -209,5 +213,94 @@ class Preview(Markdown):
             body = notice + cut
             self._line_offset = notice.count("\n")
         # 顺序: 先包空格目的地, 再把本地文件/目录链接统一成类型 emoji
-        return super().update(linkify_local_dests(normalize_dests(body),
-                                                  self.doc_dir))
+        return self._update_incremental(linkify_local_dests(normalize_dests(body),
+                                                            self.doc_dir))
+
+    def _top_blocks(self, tokens: list) -> list[tuple[str, int, int, int, int]]:
+        """markdown-it token 流 → 顶层块清单: (类型, 起始行, 结束行, 首 token, 尾 token)。
+
+        与 Textual 的 _parse_markdown 建块口径一致 (level 0 的 *_open / hr / fence /
+        code_block 各对应一个块), 但**不建控件** — 比对阶段只需要类型 + 源文本切片。
+        """
+        groups: list[tuple[str, int, int, int, int]] = []
+        pending: tuple[str, int, int, int] | None = None
+        for index, token in enumerate(tokens):
+            if token.level != 0:
+                continue
+            if token.type in ("hr", "fence", "code_block"):
+                start, end = token.map or (0, 0)
+                groups.append((token.type, start, end, index, index))
+            elif token.type.endswith("_open"):
+                start, end = token.map or (0, 0)
+                pending = (token.type, start, end, index)
+            elif token.type.endswith("_close") and pending is not None:
+                groups.append((pending[0], pending[1], pending[2], pending[3], index))
+                pending = None
+        return groups
+
+    def _update_incremental(self, body: str):
+        """只重挂"内容变了的那些块", 其余复用 — 全量重建实测 250-1040ms/次 (241 块)。
+
+        块的渲染只取决于它自己的那段 markdown, 所以拿 (块类型, 该块源文本切片) 做
+        首尾公共段比对 (不含行号: 上面插一行会让后面所有块的行号平移, 但内容没变,
+        复用后把新行号刷回去即可)。比对走 token, 不给没变的块建控件 — 建 241 个块
+        控件本身就要 ~40ms, 白建就等于没省。
+        首渲染 / 空文档 / 拿不到旧块时退回 Textual 的全量重建。
+        """
+        previous, old_blocks = self._body, list(self.children)
+        self._body = body
+        if previous is None or not old_blocks:
+            return super().update(body)
+        tokens = list(self._parser.parse(body))
+        groups = self._top_blocks(tokens)
+        self._markdown = body
+        self._table_of_contents = None
+
+        def old_key(block: MarkdownBlock) -> tuple[str, str]:
+            start, end = block.source_range
+            return block.name, previous[start:end]
+
+        def new_key(group: tuple[str, int, int, int, int]) -> tuple[str, str]:
+            name, start, end, _, _ = group
+            return name, body[start:end]
+
+        old_keys = [old_key(b) for b in old_blocks]
+        new_keys = [new_key(g) for g in groups]
+        span = min(len(old_keys), len(new_keys))
+        head = 0
+        while head < span and old_keys[head] == new_keys[head]:
+            head += 1
+        tail = 0
+        while (tail < span - head
+               and old_keys[len(old_keys) - 1 - tail] == new_keys[len(new_keys) - 1 - tail]):
+            tail += 1
+
+        keep_prefix = old_blocks[:head]
+        keep_suffix = old_blocks[len(old_blocks) - tail:] if tail else []
+        for old_block, group in zip(keep_prefix, groups[:head]):
+            old_block.source_range = (group[1], group[2])  # 行号可能已平移
+        for old_block, group in zip(keep_suffix, groups[len(groups) - tail:]):
+            old_block.source_range = (group[1], group[2])
+
+        if head == len(old_keys) == len(new_keys):
+            return AwaitComplete()  # 内容没变 (例如只差一个行尾换行)
+
+        doomed = old_blocks[head:len(old_blocks) - tail]
+        fresh_groups = groups[head:len(groups) - tail]
+        fresh = (list(self._parse_markdown(
+            tokens[fresh_groups[0][3]:fresh_groups[-1][4] + 1]))
+            if fresh_groups else [])
+        anchor = keep_suffix[0] if keep_suffix else None
+
+        async def apply() -> None:
+            if doomed or fresh:
+                with self.app.batch_update():
+                    if doomed:
+                        await self.remove_children(doomed)
+                    if fresh:
+                        await self.mount_all(fresh, before=anchor)
+            self.post_message(
+                Markdown.TableOfContentsUpdated(self, self.table_of_contents)
+            )
+
+        return AwaitComplete(apply())

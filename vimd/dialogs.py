@@ -6,7 +6,7 @@ from pathlib import Path
 
 from textual import on
 from textual.app import ComposeResult
-from textual.events import Click
+from textual.events import Click, Paste
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
@@ -22,7 +22,9 @@ HELP_TEXT = """\
   [cyan]格式[/cyan]   Ctrl+B 加粗 · Ctrl+I 斜体 · Ctrl+K 代码块
           Ctrl+L 链接 · Ctrl+Shift+L 图片
   [cyan]查找[/cyan]   Ctrl+F 弹窗 · Enter 下一个 · Shift+Enter 上一个
-  [cyan]其他[/cyan]   Ctrl+Z/Y 撤销重做 · Ctrl+H 帮助 · Ctrl+Q 退出
+  [cyan]缩放[/cyan]   Alt+↑ 放大 · Alt+↓ 缩小 · Alt+Home 复位 (改终端字体, 编辑+预览一起)
+         终端自带的 Ctrl+Shift+= / Ctrl+- / Ctrl+0 也能缩放当前窗口 (不持久)
+  [cyan]其他[/cyan]   Ctrl+A 全选 · Ctrl+Z/Y 撤销重做 · Ctrl+H 帮助 · Ctrl+Q 退出
 
 [dim]预览滚动: 方向键 / PgDn / Home / End · 弹窗外点一下即关 · 图片链接点开用系统程序
 预览跟随: 分屏下预览跟着光标走(光标行贴住预览底边, 上面留得住刚写的上文);
@@ -92,11 +94,13 @@ class HelpScreen(ModalScreen[None]):
 class PathInput(Input):
     """路径输入框: 拖入 WT 的带引号路径落地前去引号。"""
 
-    def _on_paste(self, event) -> None:
+    async def on_event(self, event) -> None:
+        # 同 Editor: 覆写 _on_paste 再调 super 会被 MRO 派发 + 自己那次插两遍
         from .io import unquote_dropped_path
 
-        event.text = unquote_dropped_path(event.text)
-        super()._on_paste(event)
+        if isinstance(event, Paste):
+            event.text = unquote_dropped_path(event.text)
+        await super().on_event(event)
 
 
 class PathPrompt(ModalScreen[str | None]):

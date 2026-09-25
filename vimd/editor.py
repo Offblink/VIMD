@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from rich.segment import Segment
 
+from textual.binding import Binding
+from textual.events import Paste
 from textual.strip import Strip
 from textual.widgets import TextArea
 from textual.widgets._text_area import LanguageDoesNotExist
@@ -29,6 +31,12 @@ def _markdown_language_or_none() -> str | None:
 class Editor(TextArea):
     """Markdown 文档编辑区。"""
 
+    BINDINGS = [
+        # TextArea 原生把 ctrl+a 绑成"到行首"+ 全选挂在 F7 (_text_area.py:226/259),
+        # 跟编辑器通用直觉不符 → ctrl+a 改绑全选 (home 仍是行首, F7 也照旧能用)
+        Binding("ctrl+a", "select_all", "全选", show=False),
+    ]
+
     def __init__(self, **kwargs) -> None:
         super().__init__(
             language=_markdown_language_or_none(),
@@ -37,10 +45,18 @@ class Editor(TextArea):
             **kwargs,
         )
 
-    async def _on_paste(self, event) -> None:
-        """拖入 WT 的路径带引号 -> 落编辑器前去掉 (见 io.unquote_dropped_path)。"""
-        event.text = unquote_dropped_path(event.text)
-        await super()._on_paste(event)
+    async def on_event(self, event) -> None:
+        """拖入 WT 的路径带引号 -> 落编辑器前去掉 (见 io.unquote_dropped_path)。
+
+        只改 event.text, 插入交给 TextArea 自己做 — 千万别覆写 `_on_paste` 再
+        `super()._on_paste()`: Textual 派发消息时按 **MRO 逐类**取 `_on_paste`
+        (message_pump.py:780), 基类那份本来就会被单独调一次, 子类再调一次 = 插两遍;
+        再叠上 App 对非转发粘贴的二次转发, 一个拖放路径会长出 4 份。
+        on_event 在派发之前跑 (message_pump.py:802), 改完走原逻辑正好插一次。
+        """
+        if isinstance(event, Paste):
+            event.text = unquote_dropped_path(event.text)
+        await super().on_event(event)
 
     def on_key(self, event) -> None:
         """TextArea 默认占用的两个键在此拦截:

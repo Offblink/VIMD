@@ -25,6 +25,7 @@ from textual.widgets import Button, Static
 from .io import FileGuard, read_text_file, write_text_file
 
 from . import formatting
+from . import zoom
 from .dialogs import HelpScreen, PathPrompt, QuitConfirm, RecoveryPrompt
 from .editor import Editor
 from .find_replace import FindState, FindScreen, find_next as _find_next
@@ -262,6 +263,11 @@ class VIMDApp(App):
         Binding("ctrl+k", "format_code", "代码块", show=False),
         Binding("ctrl+l", "format_link", "链接", show=False),
         Binding("ctrl+shift+l", "format_image", "图片", show=False),
+        # 缩放键实测 (WT + ConPTY, 2026-09-25): ctrl+shift+↑/↓ 与 ctrl+plus/minus/0 都被
+        # WT 自己的绑定吃掉 (WT 原生缩放), 应用收不到; alt+↑/↓/home 能到达 (f10 也会被吞)
+        Binding("alt+up", "zoom_in", "放大", show=False),
+        Binding("alt+down", "zoom_out", "缩小", show=False),
+        Binding("alt+home", "zoom_reset", "缩放复位", show=False),
         Binding("ctrl+h", "show_help", "帮助"),
         Binding("f2", "mode_edit", "编辑"),
         Binding("f3", "mode_preview", "预览"),
@@ -726,6 +732,29 @@ class VIMDApp(App):
 
     def action_format_image(self) -> None:
         formatting.insert_image(self.query_one(Editor))
+
+    # ── 缩放 (改终端字体: 编辑 + 预览一起缩放, 见 zoom.py) ──
+    def action_zoom_in(self) -> None:
+        self._zoom(1)
+
+    def action_zoom_out(self) -> None:
+        self._zoom(-1)
+
+    def action_zoom_reset(self) -> None:
+        self._zoom(None)
+
+    def _zoom(self, delta: float | None) -> None:
+        if zoom.settings_path() is None:
+            self.notify("缩放要在 Windows Terminal 里跑 (字体大小归终端管)",
+                        severity="warning")
+            return
+        changed, size = (zoom.set_size(zoom.DEFAULT_SIZE) if delta is None
+                         else zoom.adjust(delta))
+        if not changed:
+            self.notify("缩放没生效: 改不动 Windows Terminal 的 settings.json",
+                        severity="warning")
+            return
+        self.notify(f"终端字体 {size:g}")
 
     # ── 帮助与退出 ──────────────────────────────────────────
     def action_show_help(self) -> None:

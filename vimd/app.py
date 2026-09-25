@@ -236,6 +236,8 @@ class VIMDApp(App):
         width: 76; height: auto; max-height: 90%;
         padding: 1 2; background: $surface; border: thick $accent;
     }
+    #help-box { height: 90%; }          /* 内容固定比一屏高: 靠里面的滚动容器翻页 */
+    #help-scroll { height: 1fr; }
     #quit-box { width: 60; }
     #recover-box {
         width: auto; height: auto; max-width: 90%; max-height: 90%;

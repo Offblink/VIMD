@@ -31,6 +31,9 @@ def _markdown_language_or_none() -> str | None:
 class Editor(TextArea):
     """Markdown 文档编辑区。"""
 
+    #: 行号列与正文之间的空隙列数 (Textual 原生写死 2, 太挤 → 放宽到 4)
+    GUTTER_GAP = 4
+
     BINDINGS = [
         # TextArea 原生把 ctrl+a 绑成"到行首"+ 全选挂在 F7 (_text_area.py:226/259),
         # 跟编辑器通用直觉不符 → ctrl+a 改绑全选 (home 仍是行首, F7 也照旧能用)
@@ -77,6 +80,19 @@ class Editor(TextArea):
         self._line_cache.clear()
         self.refresh(layout=True)
 
+    @property
+    def gutter_width(self) -> int:
+        """行号列宽 = 最长行号位数 + `GUTTER_GAP`。
+
+        覆写 Textual 的原生实现, 它把间距写死成 margin=2 (_text_area.py:1762)。
+        改这个属性而不是在 render_line 里塞空格: wrap_width、虚拟尺寸、鼠标命中
+        换算 (_text_area.py:1749)、正文左移都读它, 在一处加宽即全局一致。
+        """
+        if not self.show_line_numbers:
+            return 0
+        digits = len(str(self.document.line_count - 1 + self.line_number_start))
+        return digits + self.GUTTER_GAP
+
     def render_line(self, y: int) -> Strip:
         """视觉行号: 每个折出来的视觉行都编号 — 软换行后行号自动 +1。
 
@@ -95,9 +111,11 @@ class Editor(TextArea):
             # y = 屏幕行 (native 用 y_offset = y + scroll_y 定位文档行,
             # 见 _render_line 头) — 行号必须同样加滚动偏移, 否则滚动时冻结 1..N
             if len(first.text) == self.gutter_width:
-                width = max(self.gutter_width - 2, 0)
+                # 行号右对齐占满「列宽 - 空隙」, 其余留给 GUTTER_GAP 个空格
+                width = max(self.gutter_width - self.GUTTER_GAP, 0)
                 text = (
-                    f"{str(y + int(self.scroll_y) + self.line_number_start):>{width}}  "
+                    f"{str(y + int(self.scroll_y) + self.line_number_start):>{width}}"
+                    f"{' ' * self.GUTTER_GAP}"
                 )
                 segments[0] = Segment(text, first.style, first.control)
                 strip = Strip(segments, strip.cell_length)

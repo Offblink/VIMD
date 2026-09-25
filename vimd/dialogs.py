@@ -27,19 +27,22 @@ HELP_KEYS: list[tuple[str, list[tuple[str, str]]]] = [
     ("格式", [("Ctrl+B", "加粗"), ("Ctrl+I", "斜体"), ("Ctrl+K", "代码块"),
               ("Ctrl+L", "链接"), ("Ctrl+Shift+L", "内嵌图片")]),
     ("缩放", [("Alt+↑", "放大 (编辑+预览一起)"), ("Alt+↓", "缩小"),
-              ("Alt+Home", "复位")]),
+              ("Alt+Home", "复位"),
+              ("Ctrl+Alt+↑ / ↓ / Home", "备用键 (同上)")]),
+
     ("其他", [("Ctrl+H", "帮助"), ("Ctrl+Q", "退出"),
               ("Enter / Esc", "关闭弹窗")]),
 ]
 
-HELP_NOTES = """\
-[dim]预览滚动: 方向键 / PgDn / Home / End
-预览跟随: 分屏下预览跟着光标走 —— 光标行贴住预览底边, 上面留得住刚写的上文;
-        滚开预览即停跟 (对着上文写下文), 滚回底部 End 恢复
-缩放说明: 改的是终端字体, 会记住; 终端自带的 Ctrl+Shift+= / Ctrl+- / Ctrl+0
-        只缩放当前窗口, 不持久
-图片 / 链接点击用系统默认程序打开 · 弹窗外点一下即关 · 本框用方向键 / PgDn 滚动[/dim]
-"""
+# 底部说明: 一行一条, 与上面键表同款 (标签列按单元格宽度对齐)
+HELP_NOTES: list[tuple[str, str]] = [
+    ("预览滚动", "方向键 / PgDn / Home / End"),
+    ("预览跟随", "分屏下预览跟着光标走 —— 光标行贴住预览底边, 上面留得住刚写的上文; "
+                 "滚开预览即停跟 (对着上文写下文), 滚回底部 End 恢复"),
+    ("缩放", "改的是终端字体, 会记住; 终端自带的 Ctrl+= / Ctrl+- / Ctrl+0 "
+             "只缩放当前窗口, 不持久"),
+    ("图片 / 链接", "点击用系统默认程序打开"),
+]
 
 
 def help_keys_text() -> str:
@@ -51,6 +54,14 @@ def help_keys_text() -> str:
         for key, desc in items:
             lines.append(f"  {key}{' ' * (width - cell_len(key))}  {desc}")
     return "\n".join(lines)
+
+
+def help_notes_text() -> str:
+    """把 HELP_NOTES 排成一行一条的对齐文本 (与 help_keys_text 同款)。"""
+    width = max(cell_len(label) for label, _ in HELP_NOTES)
+    lines = [f"  {label}{' ' * (width - cell_len(label))}  {note}"
+             for label, note in HELP_NOTES]
+    return "[dim]" + "\n".join(lines) + "[/dim]"
 
 
 class ModalBox(Vertical):
@@ -96,9 +107,10 @@ class HelpScreen(ModalScreen[None]):
             # 行号开关与提示钉在盒底, 滚到哪都能看到
             with VerticalScroll(id="help-scroll"):
                 yield Static(help_keys_text())
-                yield Static(HELP_NOTES)
+                yield Static(help_notes_text())
             yield CaseCheckbox("显示行号", id="line-check")
-            yield Static("[dim]Enter / Esc 关闭 · 方向键 / PgDn 滚动[/dim]", id="help-hint")
+            # 提示也一行一条, 跟上面的键表统一
+            yield Static("[dim]Enter / Esc 关闭\n方向键 / PgDn 滚动[/dim]", id="help-hint")
 
     def action_dismiss_screen(self) -> None:
         self.dismiss(None)

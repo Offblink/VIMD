@@ -19,6 +19,7 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
+from textual.widget import Widget
 from textual.widgets import Button, Static
 
 from .io import FileGuard, read_text_file, write_text_file
@@ -100,6 +101,88 @@ class TitleRow(Horizontal):
     def on_click(self, event) -> None:
         event.stop()
         self.app.action_show_help()
+
+
+class PreviewScroll(VerticalScroll):
+    """预览滚动容器 — 跟随光标, 但只在"光标位置被推到预览底边"时才向下推进。
+
+    跟随状态挂在滚动位置上 (用户约定的口径):
+      - 预览在底部        → 跟随: 分屏下光标所在块被钉在可视区底边, 上面永远留得住
+                            刚写过的上文 (写完一行, 预览跟着走一行);
+      - 手动滚离底部      → 不跟随: 可以安心"预览上文、写下文", 打字不再把它拽回去;
+      - 再滚回底部 (End)  → 恢复跟随。
+    只向下推进, 绝不自动回滚 — 于是"看上文"和"编辑预览同步"两件事互不打架。
+    """
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.follow = True
+        self._auto_y: int | None = None  # 上次程序滚动的落点 (据此认出"不是用户滚的")
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        super().watch_scroll_y(old_value, new_value)
+        if self._auto_y is not None and round(new_value) == self._auto_y:
+            return  # 本类自己滚的, 跟随状态不动
+        self._auto_y = None  # 用户滚的: 落点记账作废
+        self.follow = self.is_vertical_scroll_end
+
+    def watch_virtual_size(self, *_size: object) -> None:
+        # 预览重建 (打字防抖到期 / 换文件) 后内容高度变了: 跟随态下把光标重新钉回底边
+        self.call_after_refresh(self.sync_caret)
+
+    def reset(self) -> None:
+        """换文件 / 新建: 预览回顶部, 跟随重新武装 (跟 MDPad 打开新文档的起点一致)。"""
+        self.follow = True
+        self._auto_y = 0
+        self.scroll_to(y=0, animate=False)
+
+    def _content_y(self, block: Widget) -> float:
+        """块在滚动内容坐标系里的 y — 与当前滚动位置无关。
+
+        不能用 region: 程序滚动后它和 scroll_y 一样要到下一帧才更新 (实测
+        滚到 28 后立刻再读 block.region.y 还是滚动前那个值), 同一帧里第二次
+        同步就会照着旧位置再滚一遍 -> 重复下滚。virtual_region 是内容坐标,
+        不受滚动影响, 同一帧里问几次都是同一个答案。
+        """
+        y = 0.0
+        node: Widget | None = block
+        while isinstance(node, Widget) and node is not self:
+            y += node.virtual_region.y
+            node = node.parent if isinstance(node.parent, Widget) else None
+        return y
+
+    def sync_caret(self) -> bool:
+        """把光标所在块推进可视区底边; 不需要动 (或不在分屏) 时返回 False。
+
+        目标位置直接解方程算出来 (offset = 锚点内容 y - 可视区高 + 1), 不依赖
+        当前 region/scroll_y, 所以同一帧被叫多少次结果都一样 (幂等)。只向下:
+        光标已被"看过"(在可视区内, 或用户把预览滚到了更下面)就不动 — 这就是
+        "没被推到最底下就不跟随"。
+        """
+        if not self.follow or not self.display:
+            return False
+        editor = self.app.query_one(Editor)
+        if not editor.display:  # 纯预览 (F3): 没有光标可跟, 滚动权全归用户
+            return False
+        hit = self.query_one(Preview).block_for_line(editor.cursor_location[0])
+        if hit is None:
+            return False
+        block, frac = hit
+        box = block.virtual_region
+        if box.height <= 0:
+            return False  # 预览刚重建, 块还没布局 -> 下一帧 virtual_size 变化时再钉
+        anchor = self._content_y(block) + round(frac * (box.height - 1))
+        target = anchor - (self.scrollable_content_region.height - 1)
+        current = max(int(self.scroll_target_y), int(self.scroll_y),
+                      self._auto_y or 0)
+        if target <= current:
+            return False
+        target = min(target, self.max_scroll_y)
+        if target <= current:
+            return False
+        self._auto_y = target  # 先记账: watch_scroll_y 据此认出这次是自己滚的
+        self.scroll_to(y=target, animate=False)
+        return True
 
 
 class VIMDApp(App):
@@ -209,7 +292,7 @@ class VIMDApp(App):
             yield Static("", id="tb-name")
         with Horizontal(id="body"):
             yield Editor(id="editor")
-            with VerticalScroll(id="preview-scroll"):
+            with PreviewScroll(id="preview-scroll"):
                 yield Preview(id="preview")
         with Horizontal(id="botbar"):
             yield Button("Ctrl+H 帮助", id="hint-h", compact=True)
@@ -373,7 +456,7 @@ class VIMDApp(App):
             body.remove_class("m-" + m)
         body.add_class("m-" + mode)
         editor = self.query_one(Editor)
-        scroll = self.query_one("#preview-scroll", VerticalScroll)
+        scroll = self.query_one("#preview-scroll", PreviewScroll)
         editor.display = mode in ("edit", "split")
         scroll.display = mode in ("preview", "split")
         if mode == "preview":
@@ -407,6 +490,7 @@ class VIMDApp(App):
     def on_text_area_selection_changed(self, event) -> None:
         del event
         self.refresh_status()
+        self._sync_preview_scroll()
 
     def _render_if(self, gen: int) -> None:
         if gen != self._preview_gen:
@@ -414,13 +498,19 @@ class VIMDApp(App):
         # 编辑视图 (F2): 预览隐藏却仍会全量重建 — 实测单次几百 ms CPU 且
         # 分段阻塞事件循环 ~100ms, 打字停顿后立刻卡一下, 纯浪费。
         # 切到 F3/F4 时 _apply_mode 会立即补渲染, 内容不丢。
-        scroll = self.query_one("#preview-scroll", VerticalScroll)
+        scroll = self.query_one("#preview-scroll", PreviewScroll)
         if not scroll.display:
             return
         self._render_preview_now()
 
     def _render_preview_now(self) -> None:
         self.query_one(Preview).update(self.query_one(Editor).text)
+        # 重建是异步挂载的, 块位置要等下一帧才生效 — 排到刷新后补一次定位
+        # (跟随态下把光标钉回底边; 不跟随时 sync_caret 自己就短路了)
+        self.call_after_refresh(self._sync_preview_scroll)
+
+    def _sync_preview_scroll(self) -> None:
+        self.query_one("#preview-scroll", PreviewScroll).sync_caret()
 
     # ── 状态栏 ──────────────────────────────────────────────
     @on(Button.Pressed)
@@ -480,6 +570,8 @@ class VIMDApp(App):
         preview = self.query_one(Preview)
         preview.doc_dir = path.parent
         preview.update(content)
+        # 新文档预览从顶部开始, 跟随重新武装 (上一个文件的滚离底部状态不带过来)
+        self.query_one("#preview-scroll", PreviewScroll).reset()
         self.refresh_status()
         self.notify(f"已打开 {path.name}")
 
@@ -581,6 +673,7 @@ class VIMDApp(App):
         preview = self.query_one(Preview)
         preview.doc_dir = Path.cwd()
         preview.update("")
+        self.query_one("#preview-scroll", PreviewScroll).reset()
         # 旧文件的提示态收回; 新缓冲 = 键 "", 有自己的草稿才再问
         self._reset_recovery_prompt()
         self._check_recovery()

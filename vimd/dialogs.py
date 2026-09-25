@@ -24,7 +24,9 @@ HELP_TEXT = """\
   [cyan]查找[/cyan]   Ctrl+F 弹窗 · Enter 下一个 · Shift+Enter 上一个
   [cyan]其他[/cyan]   Ctrl+Z/Y 撤销重做 · Ctrl+H 帮助 · Ctrl+Q 退出
 
-[dim]预览滚动: 方向键 / PgDn / Home / End · 弹窗外点一下即关 · 图片链接点开用系统程序[/dim]
+[dim]预览滚动: 方向键 / PgDn / Home / End · 弹窗外点一下即关 · 图片链接点开用系统程序
+预览跟随: 分屏下预览跟着光标走(光标行贴住预览底边, 上面留得住刚写的上文);
+滚开预览即停跟(对着上文写下文), 滚回底部 End 恢复[/dim]
 """
 
 

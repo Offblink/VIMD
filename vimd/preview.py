@@ -20,6 +20,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from textual.widgets import Markdown
+from textual.widgets.markdown import MarkdownBlock
 
 from .links import classify_navigation_url, local_path_from_navigation
 
@@ -154,10 +155,42 @@ class Preview(Markdown):
         self.can_focus = True  # 预览模式下接管键盘焦点
         self.doc_dir: Path = Path.cwd()
         self._source: str | None = None  # 上次喂给渲染的原文 (同文去重)
+        self._line_offset = 0  # 截断提示插在正文前的行数 (源码行 → 渲染行)
 
     def on_markdown_link_clicked(self, event: Markdown.LinkClicked) -> None:
         event.stop()
         open_href(event.href, self.doc_dir, self.app.notify)
+
+    def block_for_line(self, source_line: int) -> tuple[MarkdownBlock, float] | None:
+        """源码行 → (命中的渲染块, 块内纵向比例 0..1)；对不上任何块时 None。
+
+        渲染块自带 source_range (markdown-it 的 token.map, 行号与源码逐行对应),
+        截断提示插在正文前, 先按 _line_offset 平移。块会嵌套 (列表项里还有段落),
+        walk_children 是文档序 → 命中的最后一个即最深那个, 定位更准。
+        (实测 walk_children 比 query(MarkdownBlock) 快 30 倍: 0.02ms vs 0.6ms,
+          这个方法每次光标移动都要跑, 用 query 会白吃打字延迟)
+        """
+        target = source_line + self._line_offset
+        hit: MarkdownBlock | None = None
+        nearest: MarkdownBlock | None = None
+        nearest_gap = 0
+        for block in self.walk_children(MarkdownBlock):
+            start, end = block.source_range
+            if end <= start:
+                continue  # token.map 缺失的合成块 (source_range 退化为 (0, 0))
+            if start <= target < end:
+                hit = block
+                continue
+            # 空行/围栏外的散行不在任何块里: 退到最近那个块 (取其首/尾行)
+            gap = start - target if target < start else target - end
+            if nearest is None or gap < nearest_gap:
+                nearest, nearest_gap = block, gap
+        if hit is None:
+            hit = nearest
+        if hit is None:
+            return None
+        start, end = hit.source_range
+        return hit, min(max((target - start) / (end - start), 0.0), 1.0)
 
     def update(self, markdown: str):
         """同文去重 + 超长截断 (PREVIEW_MAX) + 归一化空格目的地。"""
@@ -166,6 +199,7 @@ class Preview(Markdown):
             return None
         self._source = markdown
         body = markdown
+        self._line_offset = 0
         if len(body) > PREVIEW_MAX:
             cut = body[:PREVIEW_MAX].rsplit("\n", 1)[0]
             notice = (
@@ -173,6 +207,7 @@ class Preview(Markdown):
                 f"预览仅渲染前 {len(cut)} 字符 (编辑与保存不受影响)\n\n"
             )
             body = notice + cut
+            self._line_offset = notice.count("\n")
         # 顺序: 先包空格目的地, 再把本地文件/目录链接统一成类型 emoji
         return super().update(linkify_local_dests(normalize_dests(body),
                                                   self.doc_dir))

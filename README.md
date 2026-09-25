@@ -19,8 +19,6 @@ python vimd.py 文档.md
 - 打开和另存为使用系统文件对话框；对话框不可用时回退为内置路径输入
 - 查找替换弹窗（右下角）：区分大小写勾选、替换当前、全部替换；关窗后 `Ctrl+G` 继续查找
 - 帮助窗口内可切换是否显示行号
-- 整体缩放：`Alt+↑` 放大 · `Alt+↓` 缩小 · `Alt+Home` 复位（备用键 `Ctrl+Alt+↑` / `Ctrl+Alt+↓` / `Ctrl+Alt+Home`）—— 直接改终端字体，编辑区与预览一起缩放，且会记住；终端自带的 `Ctrl+=` / `Ctrl+-` / `Ctrl+0` 只缩放当前窗口，不持久
-  - 只支持 Windows Terminal：缩放改的是终端 profile 里的字体，所以要在 VIMD 那个 profile 的窗口里按；双击 exe 跑在控制台主机里改不了（这时会提示，不会乱改配置）
 - 预览中的链接和图片用系统默认程序打开
 - 文件打开期间不可被外部移动、删除或改名；支持 UTF-8、GBK 等多种编码
 - 顶栏显示文件名与标题，底栏左侧是键位、右侧行列号
@@ -35,7 +33,6 @@ python vimd.py 文档.md
 | 格式 | `Ctrl+B` 加粗 · `Ctrl+I` 斜体 · `Ctrl+K` 代码块 · `Ctrl+L` 链接 · `Ctrl+Shift+L` 图片 |
 | 查找 | `Ctrl+F` 打开 · `Enter` 下一个 · `Shift+Enter` 上一个 · `Ctrl+G` 继续查找 |
 | 编辑 | `Ctrl+A` 全选 · `Ctrl+Z` 撤销 · `Ctrl+Y` 重做 |
-| 缩放 | `Alt+↑` 放大 · `Alt+↓` 缩小 · `Alt+Home` 复位（改终端字体，编辑+预览一起）；备用键 `Ctrl+Alt+↑` / `↓` / `Home` |
 | 其他 | `Ctrl+H` 帮助 · `Ctrl+Q` 退出 |
 
 ## 保存机制
@@ -50,6 +47,7 @@ python vimd.py 文档.md
 
 - 在 Windows 上用**终端**（如 Windows Terminal）运行，别用控制台主机：实测大量 CLI（包括 VIMD）在控制台主机里图标和显示都不正常
 - 斜体用 `Ctrl+I`：需要终端支持 kitty 键盘协议（Windows Terminal 支持）；不支持的终端改用 `Alt+I`
+- 缩放（编辑区+预览一起变大）用终端自己的 `Ctrl+=` / `Ctrl+-` / `Ctrl+0`；VIMD 不接管这几个键，字体大小归终端管
 - 中文由终端输入法处理，组词完成后整词上屏
 - 编辑区语法高亮需要安装 tree-sitter 的 Markdown 语法包，未安装时为纯文本，不影响预览渲染
 - 文件锁定与编码探测逻辑取自 [MDPad](https://github.com/Offblink/MDPad)

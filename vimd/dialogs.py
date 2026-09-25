@@ -26,28 +26,28 @@ HELP_KEYS: list[tuple[str, list[tuple[str, str]]]] = [
               ("Shift+Enter", "查找上一个")]),
     ("格式", [("Ctrl+B", "加粗"), ("Ctrl+I", "斜体"), ("Ctrl+K", "代码块"),
               ("Ctrl+L", "链接"), ("Ctrl+Shift+L", "内嵌图片")]),
-    ("缩放", [("Alt+↑", "放大 (编辑+预览一起)"), ("Alt+↓", "缩小"),
-              ("Alt+Home", "复位"),
-              ("Ctrl+Alt+↑ / ↓ / Home", "备用键 (同上)")]),
-
     ("其他", [("Ctrl+H", "帮助"), ("Ctrl+Q", "退出"),
               ("Enter / Esc", "关闭弹窗")]),
 ]
 
-# 底部说明: 一行一条, 与上面键表同款 (标签列按单元格宽度对齐)
+# 底部说明: 一行一条, 说明列与上面的键表**同一列** (整块看起来才是一张表)
+# 每条都要能在一行里放下 (终端宽度不够时才会自动折行)
 HELP_NOTES: list[tuple[str, str]] = [
     ("预览滚动", "方向键 / PgDn / Home / End"),
-    ("预览跟随", "分屏下预览跟着光标走 —— 光标行贴住预览底边, 上面留得住刚写的上文; "
-                 "滚开预览即停跟 (对着上文写下文), 滚回底部 End 恢复"),
-    ("缩放", "改的是终端字体, 会记住; 终端自带的 Ctrl+= / Ctrl+- / Ctrl+0 "
-             "只缩放当前窗口, 不持久"),
+    ("预览跟随", "跟着光标把预览推到最底; 滚开预览即停跟, 滚回底部恢复"),
+    ("缩放", "终端自带 Ctrl+= / Ctrl+- / Ctrl+0 (不记住)"),
     ("图片 / 链接", "点击用系统默认程序打开"),
 ]
 
 
+def _key_column_width() -> int:
+    """键列的显示宽度 (按最宽的键算, 用单元格数; 键里有 ↑/↓ 这类箭头)。"""
+    return max(cell_len(key) for _, items in HELP_KEYS for key, _ in items)
+
+
 def help_keys_text() -> str:
     """把 HELP_KEYS 排成一行一条的对齐文本 (键列按最宽的单元格对齐)。"""
-    width = max(cell_len(key) for _, items in HELP_KEYS for key, _ in items)
+    width = _key_column_width()
     lines = ["[bold]VIMD 快捷键[/bold]", ""]
     for group, items in HELP_KEYS:
         lines.append(f"[cyan]{group}[/cyan]")
@@ -57,11 +57,11 @@ def help_keys_text() -> str:
 
 
 def help_notes_text() -> str:
-    """把 HELP_NOTES 排成一行一条的对齐文本 (与 help_keys_text 同款)。"""
-    width = max(cell_len(label) for label, _ in HELP_NOTES)
+    """把 HELP_NOTES 排成一行一条, **说明列与键表同一列** (两块共用一张表)。"""
+    width = _key_column_width()
     lines = [f"  {label}{' ' * (width - cell_len(label))}  {note}"
              for label, note in HELP_NOTES]
-    return "[dim]" + "\n".join(lines) + "[/dim]"
+    return "\n[dim]" + "\n".join(lines) + "[/dim]"
 
 
 class ModalBox(Vertical):

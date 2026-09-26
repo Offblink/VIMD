@@ -56,3 +56,9 @@ python vimd.py 文档.md
 - 中文由终端输入法处理，组词完成后整词上屏
 - 编辑区语法高亮需要安装 tree-sitter 的 Markdown 语法包，未安装时为纯文本，不影响预览渲染
 - 文件锁定与编码探测逻辑取自 [MDPad](https://github.com/Offblink/MDPad)
+
+## 开发
+
+```bash
+python tests/pilot.py    # 全量回归 (退出码 0 = 全过; 跑在临时目录, 不碰你的设置)
+```

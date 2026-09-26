@@ -798,20 +798,30 @@ class VIMDApp(App):
         )
 
     # ── 格式化快捷键 (键义见 formatting.py) ─────────────────
+    def _format_action(self, fn) -> None:
+        """格式键只在**编辑器聚焦**时生效。
+
+        这些是 App 级绑定, 不看焦点: 预览/分屏未选中编辑器时按 Ctrl+B/I
+        会偷偷改不可见的选区 (2026-09-26 用户 bug)。
+        """
+        editors = self.query(Editor)
+        if editors and editors[0].has_focus:
+            fn(editors[0])
+
     def action_format_bold(self) -> None:
-        formatting.toggle_bold(self.query_one(Editor))
+        self._format_action(formatting.toggle_bold)
 
     def action_format_italic(self) -> None:
-        formatting.toggle_italic(self.query_one(Editor))
+        self._format_action(formatting.toggle_italic)
 
     def action_format_code(self) -> None:
-        formatting.insert_code_block(self.query_one(Editor))
+        self._format_action(formatting.insert_code_block)
 
     def action_format_link(self) -> None:
-        formatting.insert_link(self.query_one(Editor))
+        self._format_action(formatting.insert_link)
 
     def action_format_image(self) -> None:
-        formatting.insert_image(self.query_one(Editor))
+        self._format_action(formatting.insert_image)
 
     # ── 帮助与退出 ──────────────────────────────────────────
     def action_show_help(self) -> None:

@@ -1021,7 +1021,7 @@ async def main():
     except OSError:
         pass
 
-    # ── Alt+S 重新加载本文件 (外部程序改过盘上文件时手动同步) ──
+    # ── Ctrl+R 重新加载本文件 (外部程序改过盘上文件时手动同步) ──
     async def reload_round():
         target = SCRATCH / "reload.md"
         target.write_text("盘上第一版\n", encoding="utf-8")
@@ -1032,25 +1032,25 @@ async def main():
             check("重载: 先看到盘上第一版", "盘上第一版" in ed7.text)
             # 外部 (agent) 直接改盘上的文件, VIMD 这边没跟上
             target.write_text("盘上第二版\n", encoding="utf-8")
-            await p7.press("alt+s")
+            await p7.press("ctrl+r")
             await p7.pause(0.4)
-            check("Alt+S 拉回盘上新内容", "盘上第二版" in ed7.text)
+            check("Ctrl+R 拉回盘上新内容", "盘上第二版" in ed7.text)
             check("重载后回到干净态", ed7.text == app7._saved_text)
             check("重载后无恢复按钮",
                   not app7.query_one("#hint-recover").display)
             # 脏态: 先问, 取消则什么都不动
             ed7.text = ed7.text + "本地没保存的改动\n"
             await p7.pause(0.3)
-            await p7.press("alt+s")
+            await p7.press("ctrl+r")
             await p7.pause(0.3)
-            check("脏态 Alt+S 弹确认", isinstance(app7.screen, QuitConfirm))
+            check("脏态 Ctrl+R 弹确认", isinstance(app7.screen, QuitConfirm))
             check("确认文案是重载",
                   "重载" in str(app7.screen.query_one("#save").label))
             await p7.press("escape")
             await p7.pause(0.3)
             check("取消重载保留本地改动", "本地没保存的改动" in ed7.text)
             # 不保存重载: 丢改动, 回盘上内容
-            await p7.press("alt+s")
+            await p7.press("ctrl+r")
             await p7.pause(0.3)
             await p7.click("#discard")
             await p7.pause(0.4)
@@ -1063,7 +1063,7 @@ async def main():
         app8 = VIMDApp(path=str(SCRATCH / "not-there.md"))
         async with app8.run_test(size=(100, 30)) as p8:
             await p8.pause(0.5)
-            await p8.press("alt+s")
+            await p8.press("ctrl+r")
             await p8.pause(0.3)
             check("文件不在盘上: 不弹确认也不崩",
                   not isinstance(app8.screen, QuitConfirm)

@@ -20,7 +20,7 @@ from textual.widgets import Button, Checkbox, Input, Static
 HELP_KEYS: list[tuple[str, list[tuple[str, str]]]] = [
     ("视图", [("Alt+1", "编辑模式"), ("Alt+2", "预览模式"), ("Alt+3", "分屏模式")]),
     ("文件", [("Ctrl+N", "新建"), ("Ctrl+O", "打开"), ("Ctrl+S", "保存"),
-              ("Ctrl+Shift+S", "另存为"), ("Alt+S", "重新加载本文件")]),
+              ("Ctrl+Shift+S", "另存为"), ("Ctrl+R", "重新加载本文件")]),
     ("编辑", [("Ctrl+A", "全选"), ("Ctrl+Z", "撤销"), ("Ctrl+Y", "重做"),
               ("Ctrl+F", "查找 / 替换"), ("Alt+X", "查找下一个"),
               ("Alt+Z", "查找上一个")]),

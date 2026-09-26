@@ -5,7 +5,7 @@
     内置 io/links 纯逻辑 (源自 MDPad v2, 零 Qt 依赖)
 
 视图模式 (持久化到 %APPDATA%/VIMD/settings.json):
-    Alt+1 编辑 · Alt+2 预览 · Alt+3 分屏 · Alt+H 帮助 · Alt+L 行号 · Alt+S 重载 · Alt+Q 退出
+    Alt+1 编辑 · Alt+2 预览 · Alt+3 分屏 · Alt+H 帮助 · Alt+L 行号 · Ctrl+R 重载 · Alt+Q 退出
 """
 
 from __future__ import annotations
@@ -305,9 +305,10 @@ class VIMDApp(App):
         # priority 绑定在 App 层先比对 (app.py:4136) 才抢得到, 也不会往输入框塞字符。
         Binding("alt+z", "find_prev", "上一个", show=False, priority=True),
         Binding("alt+x", "find_next", "下一个", show=False, priority=True),
-        # Alt+S 重载同属 Alt 字母键 (也带 character): 不加 priority 的话, 焦点在
-        # 查找/路径输入框时会被 Input 当可打印字符吃进框里, 按了没反应还多打一个字
-        Binding("alt+s", "reload", "重载", show=False, priority=True),
+        # Ctrl+R 重载 (2026-09-27 用户改绑, 原 Alt+S): TextArea / Input / App 都没绑
+        # 这个键, 本来就能抢到; 仍标 priority 是为了焦点在任何输入框里都先走应用层,
+        # 与查找导航那两条一个口径
+        Binding("ctrl+r", "reload", "重载", show=False, priority=True),
         Binding("ctrl+b", "format_bold", "加粗", show=False),
         Binding("ctrl+i", "format_italic", "斜体", show=False),
         Binding("alt+i", "format_italic", "斜体", show=False),
@@ -714,9 +715,9 @@ class VIMDApp(App):
         self.refresh_status()
         self.notify(f"已打开 {path.name}")
 
-    # ── 重新加载 (Alt+S): 外部程序改过文件时手动同步 ─────────
+    # ── 重新加载 (Ctrl+R): 外部程序改过文件时手动同步 ────────
     def action_reload(self) -> None:
-        """Alt+S: 丢掉缓冲区, 重新从磁盘读本文件。
+        """Ctrl+R: 丢掉缓冲区, 重新从磁盘读本文件。
 
         外部程序 (agent) 改过磁盘上的文件、VIMD 这边没跟上时, 手动拉一次。
         有未保存改动先问 (与退出/新建同一套确认): 保存 -> 先落盘再重载,

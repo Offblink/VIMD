@@ -10,6 +10,7 @@ from __future__ import annotations
 from rich.segment import Segment
 
 from textual.binding import Binding
+from textual.document._wrapped_document import WrappedDocument
 from textual.events import Paste
 from textual.strip import Strip
 from textual.widgets import TextArea
@@ -17,6 +18,39 @@ from textual.widgets._text_area import LanguageDoesNotExist
 
 from . import formatting
 from .io import unquote_dropped_path
+
+
+def _patch_wrapped_height() -> None:
+    """把 Textual 的 `WrappedDocument.height` 换成 O(1) 版本。
+
+    原实现是 `sum(len(offsets) + 1 for offsets in self._wrap_offsets)` —— Python 级
+    生成器逐行累加, **代价 = 文档行数**。而它在渲染热路径上被反复读:
+
+      * Textual 每渲染一行读一次 (_text_area.py:1424 `out_of_bounds`);
+      * 每次编辑走 `_refresh_size` 再读一次 (_text_area.py:1290 virtual_size);
+      * 本模块的行号位数/间隔 (`_gutter_digits`) 与 `render_line` 也各读一次,
+        而 `gutter_width` 一帧内会被读多次 (wrap_width、鼠标命中换算都读它)。
+
+    实测 (4.6MB / 104985 行文档, cProfile): 一次模式切换里 `height` 被调 **784 次
+    / 8200 万次生成器迭代 = 33.7s CPU**; 一次按键里 9 万~94 万次迭代。
+    "打开后几十秒才顺、模式切换卡半分钟"的主因就是这个, 不是 Python 处理文本慢。
+
+    等价关系: `wrap()` / `wrap_range()` 每追加一个 section 就往 `_offset_to_line_info`
+    也追加一条 (见 _wrapped_document.py:118-124 与 220-230), 所以
+    `len(_offset_to_line_info) == sum(len(offsets) + 1 for offsets in _wrap_offsets)`。
+    三种状态 (首次折行 / 单行增量 / 拆行) 都逐值实测相等 (pilot 里有断言钉住)。
+    取不到该私有属性时 (Textual 升级) 退回原实现。
+    """
+    original = WrappedDocument.height.fget
+
+    def height(self: WrappedDocument) -> int:
+        offsets = getattr(self, "_offset_to_line_info", None)
+        return len(offsets) if offsets is not None else original(self)
+
+    WrappedDocument.height = property(height)
+
+
+_patch_wrapped_height()
 
 
 def _markdown_language_or_none() -> str | None:

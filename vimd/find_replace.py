@@ -2,7 +2,7 @@
 
 弹窗内键位: Enter(查找框)=下一个 · Enter(替换框)=全部替换 ·
 F6=区分大小写 · Esc=关闭。查询状态存在 app.find_state —
-关掉弹窗后 Ctrl+G / Ctrl+Shift+G 仍按最后的查询继续跳转。
+Alt+X 下一个 / Alt+Z 上一个 挂在 App 层, 弹窗内外都能用 (关窗后继续找)。
 
 与 GUI 版语义对齐 (下一个/上一个循环、实时计数); 替换逐处调用
 TextArea.replace, 每处是独立 undo 批次 (已知简化)。
@@ -76,7 +76,13 @@ def find_next(editor: Editor, state: FindState, backward: bool = False,
         return
     cursor = _offset_of(editor.text, *editor.cursor_location)
     if backward:
-        before = [m for m in matches if m[1] <= cursor]
+        # 往回找的界必须是**当前选区的起点**, 不是光标 (= 选区终点): 正向查找把
+        # 光标停在匹配末尾, 用 `end <= 光标` 会把当前这一处自己算进去 → 每次
+        # "上一个"都原地不动 (2026-09-26 实测 Alt+Z 连按无反应, 与 Shift+Enter
+        # 不响应的观感一样)。取选区起点后单匹配才循环回自己。
+        anchor = min(_offset_of(editor.text, *editor.selection.start),
+                     _offset_of(editor.text, *editor.selection.end))
+        before = [m for m in matches if m[1] <= anchor]
         start, end = before[-1] if before else matches[-1]
     else:
         after = [m for m in matches if m[0] >= cursor]
@@ -147,10 +153,11 @@ class FindScreen(ModalScreen[None]):
     #find-count { margin-top: 1; color: $text-muted; }
     #find-hint { margin-top: 1; color: $text-muted; }
     """
-    BINDINGS = [
-        ("escape", "close", "关闭"),
-        ("shift+enter", "find_prev", "上一个"),
-    ]
+    #: 上一个/下一个 (Alt+Z / Alt+X) 挂在 App 层 (priority, 见 app.py BINDINGS):
+    #: 弹窗里焦点在 Input 上也要命中, 且 Alt 系按键带 character, 必须 priority 才
+    #: 不会被 Input 当可打印字符吃进输入框 (widgets/_input.py:743)。
+    #: 弹窗内除 Enter / Esc / F6 外不再单独绑键 (Ctrl+X 保持 TextArea/Input 原生剪切)。
+    BINDINGS = [("escape", "close", "关闭")]
 
     def compose(self) -> ComposeResult:
         with ModalBox(id="find-box"):
@@ -163,7 +170,7 @@ class FindScreen(ModalScreen[None]):
                 yield Button("替换当前", id="replace-one")
                 yield Button("全部替换", id="replace-all", variant="primary")
             yield Static(
-                "[dim]Shift+Enter 上一个 · Esc 关闭[/dim]",
+                "[dim]Alt+Z 上一个 · Alt+X 下一个 · Esc 关闭[/dim]",
                 id="find-hint",
             )
 
@@ -226,9 +233,6 @@ class FindScreen(ModalScreen[None]):
     def press_replace_all(self) -> None:
         replace_all(self.editor, self.state, notify=self.app.notify)
         self.refresh_count()
-
-    def action_find_prev(self) -> None:
-        find_next(self.editor, self.state, backward=True, notify=self.app.notify)
 
     def action_close(self) -> None:
         self.dismiss(None)

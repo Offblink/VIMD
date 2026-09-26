@@ -50,6 +50,36 @@ def _recovery_path() -> Path:
     return _settings_path().parent / "recovery.json"
 
 
+def _selected_char_count(editor: Editor) -> int:
+    """选区字符数 (不含换行), 按行切片直接数 — 不拼整段字符串。
+
+    原写法是 `sum(1 for c in editor.selected_text if c not in '\\r\\n')`:
+    `selected_text` 走 `Document.get_text_range` → 从选区首行起逐行切片再 join,
+    代价 **O(选区行数) 且要建一个大字符串** (4.6MB 全选实测 3.3s), 面上再叠一层
+    Python 逐字符 sum。`refresh_status` 每次 Changed / 选区变化都跑 → 大文件下
+    "按键卡、拖选卡" 的另一半主因 (2026-09-26 cProfile 实测)。
+    按行切片同样精确 (选区文本 = 首行尾段 + 中间整行 + 末行首段), 不建大字符串:
+    全选 ≈ 12ms。
+    """
+    start, end = editor.selection.start, editor.selection.end
+    if start == end:
+        return 0
+    if end < start:
+        start, end = end, start
+    (top_row, top_col), (bottom_row, bottom_col) = start, end
+    lines = editor.document.lines
+    if top_row >= len(lines):
+        return 0
+    if bottom_row >= len(lines):
+        bottom_row, bottom_col = len(lines) - 1, len(lines[-1])
+    if top_row == bottom_row:
+        return max(0, min(bottom_col, len(lines[top_row])) - top_col)
+    total = len(lines[top_row]) - top_col + min(bottom_col, len(lines[bottom_row]))
+    for row in range(top_row + 1, bottom_row):
+        total += len(lines[row])
+    return total
+
+
 def _recovery_key(file_path: Path | None) -> str:
     """恢复条目键: 归一化绝对路径 (未命名 = "")。
 
@@ -269,7 +299,12 @@ class VIMDApp(App):
         Binding("ctrl+shift+s", "save_as", "另存为", show=False),
         Binding("ctrl+o", "open", "打开", show=False),
         Binding("ctrl+f", "find", "查找", show=False),
-        Binding("ctrl+g", "find_next", "下一个", show=False),
+        # 查找导航 (2026-09-26 用户定: Alt+Z 上一个 / Alt+X 下一个, 顶掉原来的 Ctrl+G):
+        # 两条都 priority — 查找弹窗里焦点在 Input 上, Alt 系按键带 character,
+        # 会被 Input 当可打印字符吃进输入框并 stop (widgets/_input.py:743),
+        # priority 绑定在 App 层先比对 (app.py:4136) 才抢得到, 也不会往输入框塞字符。
+        Binding("alt+z", "find_prev", "上一个", show=False, priority=True),
+        Binding("alt+x", "find_next", "下一个", show=False, priority=True),
         Binding("ctrl+b", "format_bold", "加粗", show=False),
         Binding("ctrl+i", "format_italic", "斜体", show=False),
         Binding("alt+i", "format_italic", "斜体", show=False),
@@ -521,7 +556,7 @@ class VIMDApp(App):
         else:
             editor.focus()
         self._store_mode()
-        self._render_preview_now()  # 切到预览立即刷新, 不等防抖
+        self._render_preview_if_visible()  # 切到可见的预览立即刷新, 不等防抖
         self.refresh_status()
 
     def action_mode_edit(self) -> None:
@@ -561,6 +596,19 @@ class VIMDApp(App):
             return
         self._render_preview_now()
 
+    def _render_preview_if_visible(self) -> None:
+        """预览可见才渲染 — 编辑视图下它是隐藏的, 渲染纯属白烧 CPU。
+
+        判 `_mode` 而不是控件 `display`: 打开文件时 (`_open_file`) 视图还没经过
+        `_apply_mode`, display 还是 compose 的初值。
+        实测 (4.6MB 文档 / 预览截断 256KB): 隐藏着也渲染一次 = **7.8k 个 widget 挂载
+        + 1.6 万次 CSS apply**, 而 Textual 挂载是分批的 → 这一坨会在装完文件后的头几帧
+        里持续排空, 打开后"头几十秒才顺手"的一半来自这里 (2026-09-26 实测)。
+        切到预览/分屏时 `_apply_mode` 会立即补渲染, 内容不丢。
+        """
+        if self._mode in ("preview", "split"):
+            self._render_preview_now()
+
     def _render_preview_now(self) -> None:
         self.query_one(Preview).update(self.query_one(Editor).text)
         # 重建是异步挂载的, 块位置要等下一帧才生效 — 排到刷新后补一次定位
@@ -596,7 +644,13 @@ class VIMDApp(App):
         self._store_settings({"line_numbers": visible})
 
     def refresh_status(self) -> None:
-        editor = self.query_one(Editor)
+        # 收尾竞态: 消息/防抖定时器晚于控件卸载到期 (窗口关闭 / pilot 收尾) →
+        # query_one 抛 NoMatches (2026-09-26 大文件基准里两次崩在退出路径)。
+        # 口径与 _sync_recovery_if 一致: 控件没了就放弃本次刷新。
+        editors = self.query(Editor)
+        if not editors:
+            return
+        editor = editors[0]
         _, col = editor.cursor_location
         # 软换行下右下行号也按视觉行走 (与 gutter 编号一致)
         _, vis_y = editor.wrapped_document.location_to_offset(
@@ -607,10 +661,8 @@ class VIMDApp(App):
         self.query_one("#tb-name", Static).update(f" {dirty}{name}")
         meta = self.query_one("#meta", Button)
         # 有选区: 模式左边报选中字数 (含标点与空格; 折行 \n 不算字)
-        sel = editor.selected_text
-        sel_part = (
-            f"选中 {sum(1 for c in sel if c not in '\r\n')}字  " if sel else ""
-        )
+        sel_count = _selected_char_count(editor)
+        sel_part = f"选中 {sel_count}字  " if sel_count else ""
         meta_label = f"{sel_part}{self._mode}  {vis_y + 1}:{col + 1}"
         meta.label = meta_label
         # 实测 Button 宽度锁在挂载值不随 label 重排 -> 显式数字定宽
@@ -653,7 +705,7 @@ class VIMDApp(App):
         self._recovery_gen += 1
         preview = self.query_one(Preview)
         preview.doc_dir = path.parent
-        preview.update(content)
+        self._render_preview_if_visible()  # 编辑视图下预览是隐藏的 -> 不渲染
         # 新文档预览从顶部开始, 跟随重新武装 (上一个文件的滚离底部状态不带过来)
         self.query_one("#preview-scroll", PreviewScroll).reset()
         self.refresh_status()
@@ -795,6 +847,12 @@ class VIMDApp(App):
     def action_find_next(self) -> None:
         _find_next(
             self.query_one(Editor), self.find_state, notify=self.notify
+        )
+
+    def action_find_prev(self) -> None:
+        _find_next(
+            self.query_one(Editor), self.find_state, backward=True,
+            notify=self.notify,
         )
 
     # ── 格式化快捷键 (键义见 formatting.py) ─────────────────

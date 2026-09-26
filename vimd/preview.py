@@ -26,8 +26,13 @@ from textual.widgets.markdown import MarkdownBlock
 
 from .links import classify_navigation_url, local_path_from_navigation
 
-PREVIEW_MAX = 262_144  # 预览渲染字符上限, 超出截断并提示
-# 实测 2.9M 字符全文重建 ~4.4s/次: 每个防抖到期全量重建 = 大文件打字卡死
+PREVIEW_MAX = 32_768  # 预览渲染字符上限, 超出截断并提示
+# 实测 2.9M 字符全文重建 ~4.4s/次: 每个防抖到期全量重建 = 大文件打字卡死。
+# 也别调大: 预览里的 widget 数几乎正比这个窗口, 而 Textual 的模式切换/重排成本
+# 就是 ∝ widget 数。4.6MB 文档实测 (2026-09-26, 每键≈进程 CPU, 6s 观察窗):
+#   窗口 256KB -> 7817 widget / 模式切换 CSS apply 43262 / 单键 CPU 20-44s
+#   窗口  32KB -> 1044 widget / 模式切换 CSS apply  5546 / 单键 CPU 1.2-2.4s
+#  (对照: 编辑视图预览隐藏时单键 0.78-1.53s, 即 32KB 已基本把预览成本压平)
 
 
 def open_href(href: str, doc_dir: Path, notify) -> None:
@@ -233,9 +238,13 @@ class Preview(Markdown):
         self._line_offset = 0
         if len(body) > PREVIEW_MAX:
             cut = body[:PREVIEW_MAX].rsplit("\n", 1)[0]
+            # 文案必须与文档内容 / 长度无关: 原来的 "{全文} 字符 / 前 {cut} 字符" 每按
+            # 一键就变, 于是块复用比对里第一块永远失配 -> 前缀复用失效, 编辑点之前的
+            # 所有块被迫重建 (实测 doomed 842/1699 块 = 3963 次挂载 + 10695 次 apply)。
+            kb = PREVIEW_MAX // 1024
             notice = (
-                f"> ⚠ 内容 {len(markdown)} 字符, "
-                f"预览仅渲染前 {len(cut)} 字符 (编辑与保存不受影响)\n\n"
+                f"> ⚠ 文档超过 {kb}KB, "
+                f"预览仅渲染前 {kb}KB (编辑与保存不受影响)\n\n"
             )
             body = notice + cut
             self._line_offset = notice.count("\n")

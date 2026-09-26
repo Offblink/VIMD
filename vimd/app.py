@@ -601,10 +601,10 @@ class VIMDApp(App):
 
         判 `_mode` 而不是控件 `display`: 打开文件时 (`_open_file`) 视图还没经过
         `_apply_mode`, display 还是 compose 的初值。
-        实测 (4.6MB 文档 / 预览截断 256KB): 隐藏着也渲染一次 = **7.8k 个 widget 挂载
-        + 1.6 万次 CSS apply**, 而 Textual 挂载是分批的 → 这一坨会在装完文件后的头几帧
-        里持续排空, 打开后"头几十秒才顺手"的一半来自这里 (2026-09-26 实测)。
-        切到预览/分屏时 `_apply_mode` 会立即补渲染, 内容不丢。
+        实测 (4.6MB 文档, 2026-09-26): 预览可见时首次渲染 = **1k-8k 个 widget 挂载
+        + 2 万次 CSS apply** (∝ PREVIEW_MAX 窗口: 32KB->1044, 256KB->7817), 而 Textual
+        挂载是分批的 → 这一坨会在装完文件后的头几帧里持续排空, 打开后"头几十秒才顺手"
+        的一半来自这里。切到预览/分屏时 `_apply_mode` 会立即补渲染, 内容不丢。
         """
         if self._mode in ("preview", "split"):
             self._render_preview_now()

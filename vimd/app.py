@@ -27,7 +27,7 @@ from textual.widgets import Button, Static
 from .io import FileGuard, read_text_file, write_text_file
 
 from . import formatting
-from .dialogs import HelpScreen, PathPrompt, QuitConfirm, RecoveryPrompt
+from .dialogs import HelpScreen, PathPrompt, QuitConfirm, RecoveryPrompt, SettingsScreen
 from .editor import Editor
 from .find_replace import FindState, FindScreen, find_next as _find_next
 from .preview import Preview
@@ -99,7 +99,7 @@ def _store_recovery(entries: dict[str, dict]) -> None:
 
 
 class TitleRow(Horizontal):
-    """标题行: ⭘ + VIMD 居中, 整行可点 -> 打开帮助 (复刻原 Header 手感)。"""
+    """标题行: VIMD 居中、⭘ 靠右 (2026-09-26 用户定), 整行可点 -> 打开帮助。"""
 
     def on_click(self, event) -> None:
         event.stop()
@@ -227,9 +227,13 @@ class VIMDApp(App):
         border: none; text-align: left;
     }
     #botbar Button:hover { color: $text; background: $panel; }
+    #bot-sep {
+        width: 1; margin: 0 1;  /* Static 默认宽度是弹性的 (1fr), 不定宽会吞掉
+                                   整行把帮助/设置/meta 顶出屏幕 (实测 116 列) */
+    }
     #hint-recover { display: none; }
     #help-box Static { text-wrap: wrap; }
-    HelpScreen, PathPrompt, QuitConfirm, RecoveryPrompt {
+    HelpScreen, SettingsScreen, PathPrompt, QuitConfirm, RecoveryPrompt {
         align: center middle;
     }
     FindScreen { align: right bottom; }
@@ -240,6 +244,11 @@ class VIMDApp(App):
     }
     #help-box { height: 90%; }          /* 内容固定比一屏高: 靠里面的滚动容器翻页 */
     #help-scroll { height: 1fr; }
+    #settings-box {
+        width: 62; height: auto; max-height: 90%;
+        padding: 1 2; background: $surface; border: thick $accent;
+    }
+    #settings-hint { margin-top: 1; }
     #quit-box { width: 60; }
     #recover-box {
         width: auto; height: auto; max-width: 90%; max-height: 90%;
@@ -296,9 +305,9 @@ class VIMDApp(App):
     # ── 组装 ────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
         with TitleRow(id="title-row"):
-            yield Static("⭘", id="tr-icon")
+            yield Static("", id="tr-pad")  # 左侧补白, 与右侧圆圈等宽对称
             yield Static("VIMD", id="tr-title")
-            yield Static("", id="tr-pad")
+            yield Static("⭘", id="tr-icon")
         with Horizontal(id="topbar"):
             yield Static("", id="tb-name")
         with Horizontal(id="body"):
@@ -306,10 +315,14 @@ class VIMDApp(App):
             with PreviewScroll(id="preview-scroll"):
                 yield Preview(id="preview")
         with Horizontal(id="botbar"):
-            yield Button("Ctrl+H 帮助", id="hint-h", compact=True)
-            yield Button("F2 编辑", id="hint-2", compact=True)
-            yield Button("F3 预览", id="hint-3", compact=True)
-            yield Button("F4 分屏", id="hint-4", compact=True)
+            # 顺序 (2026-09-26 用户定): 三模式 → 帮助 → 设置 → 恢复;
+            # 文案不带 F 几/快捷键, 快捷键只在帮助/README 里
+            yield Button("编辑", id="hint-2", compact=True)
+            yield Button("预览", id="hint-3", compact=True)
+            yield Button("分屏", id="hint-4", compact=True)
+            yield Static("│", id="bot-sep")  # 模式与其它按钮之间的分割竖线
+            yield Button("帮助", id="hint-h", compact=True)
+            yield Button("设置", id="hint-set", compact=True)
             yield Button("恢复", id="hint-recover", compact=True)
             yield Static("", id="gap")
             yield Button("", id="meta", compact=True)
@@ -324,6 +337,10 @@ class VIMDApp(App):
 
             ctypes.windll.kernel32.SetConsoleTitleW("VIMD")
         mode = self._load_mode()
+        # 设置回放: 行号开关立即生效
+        line_numbers = self._load_settings().get("line_numbers")
+        if isinstance(line_numbers, bool):
+            self.set_line_numbers(line_numbers)
         if self.path_arg:
             p = Path(self.path_arg)
             if p.exists():
@@ -347,26 +364,36 @@ class VIMDApp(App):
         """
         self.claim.release()
 
-    # ── 设置持久化 ──────────────────────────────────────────
-    def _load_mode(self) -> str:
+    # ── 设置持久化 (mode / line_numbers / cursor, 读-改-写保其它键) ──
+    def _load_settings(self) -> dict:
         try:
             data = json.loads(_settings_path().read_text(encoding="utf-8"))
-            mode = data.get("mode")
-            if mode in MODES:
-                return mode
+            if isinstance(data, dict):
+                return data
         except (OSError, ValueError):
             pass
-        return "split"  # 首启默认分屏: 打开即见预览渲染
+        return {}
 
-    def _store_mode(self) -> None:
+    def _store_settings(self, updates: dict) -> None:
         try:
             path = _settings_path()
             path.parent.mkdir(parents=True, exist_ok=True)
+            data = self._load_settings()
+            data.update(updates)
             path.write_text(
-                json.dumps({"mode": self._mode}), encoding="utf-8"
+                json.dumps(data, ensure_ascii=False), encoding="utf-8"
             )
         except OSError:
             pass  # 设置写不进去不影响编辑
+
+    def _load_mode(self) -> str:
+        mode = self._load_settings().get("mode")
+        if mode in MODES:
+            return mode
+        return "split"  # 首启默认分屏: 打开即见预览渲染
+
+    def _store_mode(self) -> None:
+        self._store_settings({"mode": self._mode})
 
     # ── 恢复日志 (脏内容保命: 窗口×杀不死它; 按文件分条) ────
     def _clear_recovery(self) -> None:
@@ -398,9 +425,14 @@ class VIMDApp(App):
         """
         if gen != self._recovery_gen:
             return
+        # 收尾竞态: 定时器晚于控件卸载到期 (窗口关闭/run_test 收尾) → Editor 已不在,
+        # 直接放弃本次同步, 别让 NoMatches 崩在退出路径
+        editors = self.query(Editor)
+        if not editors:
+            return
         key = _recovery_key(self.file_path)
         entries = _load_recovery()
-        text = self.query_one(Editor).text
+        text = editors[0].text
         if text != self._saved_text:
             entries[key] = {
                 "path": str(self.file_path) if self.file_path else "",
@@ -520,8 +552,9 @@ class VIMDApp(App):
         # 编辑视图 (F2): 预览隐藏却仍会全量重建 — 实测单次几百 ms CPU 且
         # 分段阻塞事件循环 ~100ms, 打字停顿后立刻卡一下, 纯浪费。
         # 切到 F3/F4 时 _apply_mode 会立即补渲染, 内容不丢。
-        scroll = self.query_one("#preview-scroll", PreviewScroll)
-        if not scroll.display:
+        # query 用可空版: 收尾竞态下 #preview-scroll 可能已卸载 (同恢复定时器)
+        scrolls = self.query("#preview-scroll")
+        if not scrolls or not scrolls[0].display:
             return
         self._render_preview_now()
 
@@ -544,6 +577,7 @@ class VIMDApp(App):
         """
         actions = {
             "hint-h": self.action_show_help,
+            "hint-set": self.action_show_settings,
             "hint-2": self.action_mode_edit,
             "hint-3": self.action_mode_preview,
             "hint-4": self.action_mode_split,
@@ -556,6 +590,7 @@ class VIMDApp(App):
     def set_line_numbers(self, visible: bool) -> None:
         self.show_line_numbers = visible
         self.query_one(Editor).show_line_numbers = visible
+        self._store_settings({"line_numbers": visible})
 
     def refresh_status(self) -> None:
         editor = self.query_one(Editor)
@@ -778,6 +813,9 @@ class VIMDApp(App):
     # ── 帮助与退出 ──────────────────────────────────────────
     def action_show_help(self) -> None:
         self.push_screen(HelpScreen())
+
+    def action_show_settings(self) -> None:
+        self.push_screen(SettingsScreen())
 
     def action_request_quit(self) -> None:
         if self.query_one(Editor).text != self._saved_text:

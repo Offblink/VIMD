@@ -31,12 +31,11 @@ def _markdown_language_or_none() -> str | None:
 class Editor(TextArea):
     """Markdown 文档编辑区。"""
 
-    #: 行号列总宽(列) — 恒定: 位数进位 (100/1000) 时压缩行号与正文的间隔,
-    #: 不加宽整列, 正文不整体右移、右边框不会被顶出屏幕 (用户定的方案)
-    GUTTER_TOTAL = 7
-    #: 间隔下限 — 原生 gutter 段按 margin=2 分段 (_text_area.py:1434),
-    #: 低于 2 连原生段自己都会比 gutter_width 宽, 所以底线必须是 2
-    GUTTER_GAP_MIN = 2
+    #: 行号列: 最多按四位数留位 — 位数少时用间隔补, 但间隔**至少 1 格**
+    #: (2026-09-26 用户先要「四位数紧贴」后收回: 「不要紧贴, 至少空一格」)
+    GUTTER_DIGIT_ROOM = 4
+    #: 间隔下限: 行号与正文至少空一格
+    GUTTER_GAP_MIN = 1
 
     BINDINGS = [
         # TextArea 原生把 ctrl+a 绑成"到行首"+ 全选挂在 F7 (_text_area.py:226/259),
@@ -97,12 +96,12 @@ class Editor(TextArea):
 
     @property
     def gutter_gap(self) -> int:
-        """行号与正文的间隔 — 动态: 位数少间隔大, 位数多间隔小 (总宽尽量恒定)。"""
-        return max(self.GUTTER_GAP_MIN, self.GUTTER_TOTAL - self._gutter_digits())
+        """行号与正文的间隔 — 动态: 位数少间隔大, 但至少 1 格 (不紧贴)。"""
+        return max(self.GUTTER_GAP_MIN, self.GUTTER_DIGIT_ROOM - self._gutter_digits())
 
     @property
     def gutter_width(self) -> int:
-        """行号列宽 = 位数 + 动态间隔; 总宽锁在 `GUTTER_TOTAL`, 位数进位由间隔吸收。
+        """行号列宽 = 位数 + 动态间隔 = max(位数 + `GUTTER_GAP_MIN`, `GUTTER_DIGIT_ROOM`)。
 
         覆写 Textual 的原生实现, 它把间距写死成 margin=2 (_text_area.py:1762)。
         改这个属性而不是在 render_line 里塞空格: wrap_width、虚拟尺寸、鼠标命中
@@ -125,12 +124,16 @@ class Editor(TextArea):
             # (宽度不变 -> cell_length 与上游缓存全部保持有效)
             segments = list(strip)
             first = segments[0]
-            # 只有真正的 gutter 段才重编号: 原生 gutter 恒为 gutter_width 宽
-            # (文档末尾之外的视口行没有 gutter, 盲改会把整行内容段砍塌 -> 边框错乱)
+            # 只重写**文档内行**的首段: 文档末尾之外的视口行没有 gutter,
+            # 盲改会把整行内容段砍塌 -> 边框错乱。
+            # 判据不能用「首段宽度 == gutter_width」— 收紧总宽到 4 后,
+            # 原生 gutter 按「位数 + margin 2」排版 (100 行以上 3 位数 → 5 格 > 4)
+            # 自己就会宽出, 宽度判据恒不中 → 行号不再更新; 按行号范围认领才稳。
             # y = 屏幕行 (native 用 y_offset = y + scroll_y 定位文档行,
             # 见 _render_line 头) — 行号必须同样加滚动偏移, 否则滚动时冻结 1..N
-            if len(first.text) == self.gutter_width:
-                # 行号右对齐占满「位数」列, 其余留给动态间隔 (总宽恒定)
+            in_doc = y + int(self.scroll_y) < self.wrapped_document.height
+            if in_doc:
+                # 行号右对齐占满「位数」列, 其余留给动态间隔 (满四位紧贴)
                 gap = self.gutter_gap
                 width = self.gutter_width - gap  # == 位数
                 text = (

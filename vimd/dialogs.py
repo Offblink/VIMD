@@ -101,14 +101,20 @@ class HelpScreen(ModalScreen[None]):
         Binding("enter", "dismiss_screen", "关闭"),
     ]
 
+    def on_unmount(self) -> None:
+        """关窗把焦点还给编辑器 — 从底栏芯片点开时焦点在按钮上,
+        不还回去后续打字全喂给按钮 (2026-09-26 pilot 实测踩过)。"""
+        editors = self.app.query("#editor")
+        if editors:
+            editors[0].focus()
+
     def compose(self) -> ComposeResult:
         with ModalBox(id="help-box"):
             # 内容比盒子高: 一行一条的快捷键列表放进可滚动容器 (方向键/PgDn 滚动),
-            # 行号开关与提示钉在盒底, 滚到哪都能看到
+            # 提示钉在盒底, 滚到哪都能看到 (行号/光标样式已移到「设置」窗)
             with VerticalScroll(id="help-scroll"):
                 yield Static(help_keys_text())
                 yield Static(help_notes_text())
-            yield CaseCheckbox("显示行号", id="line-check")
             # 提示也一行一条, 跟上面的键表统一
             yield Static("[dim]Enter / Esc 关闭\n方向键 / PgDn 滚动[/dim]", id="help-hint")
 
@@ -119,10 +125,44 @@ class HelpScreen(ModalScreen[None]):
         self.action_dismiss_screen()
 
     def on_mount(self) -> None:
+        self.query_one("#help-scroll", VerticalScroll).focus()
+
+
+class SettingsScreen(ModalScreen[None]):
+    """设置 (底栏「设置」芯片): 显示行号。点击盒外关闭。
+
+    行号开关原在帮助窗底 — 用户要求「提取出来放设置窗, 按钮常驻左下角帮助右边」
+    (2026-09-26)。光标相关设置项做过后按用户要求整体回退 (终端一格一字形的
+    约束下没有满意形态), 这里只留行号。
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss_screen", "关闭"),
+        Binding("enter", "dismiss_screen", "关闭"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        with ModalBox(id="settings-box"):
+            yield CaseCheckbox("显示行号", id="line-check")
+            yield Static("[dim]Enter / Esc 关闭[/dim]", id="settings-hint")
+
+    def action_dismiss_screen(self) -> None:
+        self.dismiss(None)
+
+    def on_unmount(self) -> None:
+        """关窗把焦点还给编辑器 — 「设置」芯片点击会把焦点挪到按钮上,
+        不还回去后续打字全喂给按钮 (2026-09-26 pilot 实测踩过)。"""
+        editors = self.app.query("#editor")
+        if editors:
+            editors[0].focus()
+
+    def on_click(self, event: Click) -> None:
+        self.action_dismiss_screen()
+
+    def on_mount(self) -> None:
         box = self.query_one("#line-check", Checkbox)
         if box.value != self.app.show_line_numbers:
             box.value = self.app.show_line_numbers
-        self.query_one("#help-scroll", VerticalScroll).focus()
 
     @on(Checkbox.Changed, "#line-check")
     def line_toggled(self, event: Checkbox.Changed) -> None:

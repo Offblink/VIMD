@@ -20,7 +20,7 @@ from textual.widgets import Button, Checkbox, Input, Static
 HELP_KEYS: list[tuple[str, list[tuple[str, str]]]] = [
     ("视图", [("Alt+1", "编辑模式"), ("Alt+2", "预览模式"), ("Alt+3", "分屏模式")]),
     ("文件", [("Ctrl+N", "新建"), ("Ctrl+O", "打开"), ("Ctrl+S", "保存"),
-              ("Ctrl+Shift+S", "另存为")]),
+              ("Ctrl+Shift+S", "另存为"), ("Alt+S", "重新加载本文件")]),
     ("编辑", [("Ctrl+A", "全选"), ("Ctrl+Z", "撤销"), ("Ctrl+Y", "重做"),
               ("Ctrl+F", "查找 / 替换"), ("Alt+X", "查找下一个"),
               ("Alt+Z", "查找上一个")]),
@@ -212,27 +212,24 @@ class PathPrompt(ModalScreen[str | None]):
 
 
 class QuitConfirm(ModalScreen[str]):
-    """退出/新建前的未保存确认: 返回 save / discard / cancel。"""
+    """退出/新建/重载前的未保存确认: 返回 save / discard / cancel。"""
 
     BINDINGS = [("escape", "cancel", "取消")]
 
     def __init__(self, purpose: str = "quit") -> None:
         super().__init__()
-        self.purpose = purpose  # "quit" (默认) | "new"
+        self.purpose = purpose  # "quit" (默认) | "new" | "reload"
 
     def compose(self) -> ComposeResult:
-        new = self.purpose == "new"
+        save_label, discard_label = {
+            "new": ("保存并新建", "不保存新建"),
+            "reload": ("保存并重载", "不保存重载"),
+        }.get(self.purpose, ("保存并退出", "不保存退出"))
         with ModalBox(id="quit-box"):
             yield Static("文档尚未保存", id="quit-title")
             with Horizontal(id="quit-buttons"):
-                yield Button(
-                    "保存并新建" if new else "保存并退出",
-                    id="save",
-                    variant="primary",
-                )
-                yield Button(
-                    "不保存新建" if new else "不保存退出", id="discard"
-                )
+                yield Button(save_label, id="save", variant="primary")
+                yield Button(discard_label, id="discard")
                 yield Button("取消", id="cancel")
 
     @on(Button.Pressed)

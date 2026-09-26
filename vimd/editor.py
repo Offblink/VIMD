@@ -31,8 +31,12 @@ def _markdown_language_or_none() -> str | None:
 class Editor(TextArea):
     """Markdown 文档编辑区。"""
 
-    #: 行号列与正文之间的空隙列数 (Textual 原生写死 2, 太挤 → 放宽到 4)
-    GUTTER_GAP = 4
+    #: 行号列总宽(列) — 恒定: 位数进位 (100/1000) 时压缩行号与正文的间隔,
+    #: 不加宽整列, 正文不整体右移、右边框不会被顶出屏幕 (用户定的方案)
+    GUTTER_TOTAL = 7
+    #: 间隔下限 — 原生 gutter 段按 margin=2 分段 (_text_area.py:1434),
+    #: 低于 2 连原生段自己都会比 gutter_width 宽, 所以底线必须是 2
+    GUTTER_GAP_MIN = 2
 
     BINDINGS = [
         # TextArea 原生把 ctrl+a 绑成"到行首"+ 全选挂在 F7 (_text_area.py:226/259),
@@ -80,9 +84,25 @@ class Editor(TextArea):
         self._line_cache.clear()
         self.refresh(layout=True)
 
+    def _gutter_digits(self) -> int:
+        """行号位数 — 必须按**视觉行总数**算, 不能用逻辑行数。
+
+        `render_line` 显示的是视觉行号 (y + scroll_y + start), 软换行后视觉行数 >
+        逻辑行数: 按逻辑行数留位会差 1 位 → 行号段实际比 `gutter_width` 宽 1 格,
+        而 Strip.cell_length 仍按旧值声明 → 那一整行渲染宽出 1 格 → 控件最右一列
+        (聚焦时变蓝的 tall 右边框) 被顶出屏幕 (2026-09-26 实证: 行号到 100 起右边框消失)。
+        """
+        total = max(self.document.line_count, self.wrapped_document.height, 1)
+        return len(str(total - 1 + self.line_number_start))
+
+    @property
+    def gutter_gap(self) -> int:
+        """行号与正文的间隔 — 动态: 位数少间隔大, 位数多间隔小 (总宽尽量恒定)。"""
+        return max(self.GUTTER_GAP_MIN, self.GUTTER_TOTAL - self._gutter_digits())
+
     @property
     def gutter_width(self) -> int:
-        """行号列宽 = 最长行号位数 + `GUTTER_GAP`。
+        """行号列宽 = 位数 + 动态间隔; 总宽锁在 `GUTTER_TOTAL`, 位数进位由间隔吸收。
 
         覆写 Textual 的原生实现, 它把间距写死成 margin=2 (_text_area.py:1762)。
         改这个属性而不是在 render_line 里塞空格: wrap_width、虚拟尺寸、鼠标命中
@@ -90,8 +110,7 @@ class Editor(TextArea):
         """
         if not self.show_line_numbers:
             return 0
-        digits = len(str(self.document.line_count - 1 + self.line_number_start))
-        return digits + self.GUTTER_GAP
+        return self._gutter_digits() + self.gutter_gap
 
     def render_line(self, y: int) -> Strip:
         """视觉行号: 每个折出来的视觉行都编号 — 软换行后行号自动 +1。
@@ -111,12 +130,16 @@ class Editor(TextArea):
             # y = 屏幕行 (native 用 y_offset = y + scroll_y 定位文档行,
             # 见 _render_line 头) — 行号必须同样加滚动偏移, 否则滚动时冻结 1..N
             if len(first.text) == self.gutter_width:
-                # 行号右对齐占满「列宽 - 空隙」, 其余留给 GUTTER_GAP 个空格
-                width = max(self.gutter_width - self.GUTTER_GAP, 0)
+                # 行号右对齐占满「位数」列, 其余留给动态间隔 (总宽恒定)
+                gap = self.gutter_gap
+                width = self.gutter_width - gap  # == 位数
                 text = (
                     f"{str(y + int(self.scroll_y) + self.line_number_start):>{width}}"
-                    f"{' ' * self.GUTTER_GAP}"
+                    f"{' ' * gap}"
                 )
-                segments[0] = Segment(text, first.style, first.control)
-                strip = Strip(segments, strip.cell_length)
+                # 防御: 行号比预留位数还长时 f-string 不截断 → 整行会宽出
+                # gutter_width, 右边框被顶出屏幕 → 宁可保留原生段 (恒等宽)
+                if len(text) == self.gutter_width:
+                    segments[0] = Segment(text, first.style, first.control)
+                    strip = Strip(segments, strip.cell_length)
         return strip

@@ -15,6 +15,8 @@ import json
 import os
 from pathlib import Path
 
+from rich.cells import cell_len
+
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -566,11 +568,16 @@ class VIMDApp(App):
         dirty = "● " if editor.text != self._saved_text else ""
         self.query_one("#tb-name", Static).update(f" {dirty}{name}")
         meta = self.query_one("#meta", Button)
-        meta_label = f"{self._mode}  {vis_y + 1}:{col + 1}"
+        # 有选区: 模式左边报选中字数 (含标点与空格; 折行 \n 不算字)
+        sel = editor.selected_text
+        sel_part = (
+            f"选中 {sum(1 for c in sel if c not in '\r\n')}字  " if sel else ""
+        )
+        meta_label = f"{sel_part}{self._mode}  {vis_y + 1}:{col + 1}"
         meta.label = meta_label
         # 实测 Button 宽度锁在挂载值不随 label 重排 -> 显式数字定宽
-        # (meta 文案全 ASCII, 字符数 = 单元格数; +3 = 左右内边距)
-        meta.styles.width = len(meta_label) + 3
+        # (含中文, 字符数 ≠ 单元格数 → cell_len 换算; +3 = 左右内边距)
+        meta.styles.width = cell_len(meta_label) + 3
 
     # ── 文件操作 ────────────────────────────────────────────
     def _claim_doc(self, path: Path | None) -> None:

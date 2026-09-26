@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from pathlib import Path
 
 from rich.cells import cell_len
@@ -91,8 +92,21 @@ def _recovery_key(file_path: Path | None) -> str:
     return os.path.normcase(os.path.abspath(str(file_path)))
 
 
+def _draft_entry(file_path: Path | None, text: str) -> dict:
+    """一条草稿 (条目值)。
+
+    `ts` = 落盘时刻: `_check_recovery` 靠它认出"草稿写完之后, 文件又被
+    外部程序 (agent) 改过" —— 那种差异不是未保存丢失, 不该弹恢复框。
+    """
+    return {
+        "path": str(file_path) if file_path else "",
+        "content": text,
+        "ts": time.time(),
+    }
+
+
 def _load_recovery() -> dict[str, dict]:
-    """读恢复日志 → {key: {path, content}}; 兼容 v0.1.x 单条旧格式。"""
+    """读恢复日志 → {key: {path, content, ts}}; 兼容 v0.1.x 单条旧格式。"""
     try:
         data = json.loads(_recovery_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -448,10 +462,9 @@ class VIMDApp(App):
         if text == self._saved_text:
             return
         entries = _load_recovery()
-        entries[_recovery_key(self.file_path)] = {
-            "path": str(self.file_path) if self.file_path else "",
-            "content": text,
-        }
+        entries[_recovery_key(self.file_path)] = _draft_entry(
+            self.file_path, text
+        )
         _store_recovery(entries)
 
     def _sync_recovery_if(self, gen: int) -> None:
@@ -472,10 +485,7 @@ class VIMDApp(App):
         entries = _load_recovery()
         text = editors[0].text
         if text != self._saved_text:
-            entries[key] = {
-                "path": str(self.file_path) if self.file_path else "",
-                "content": text,
-            }
+            entries[key] = _draft_entry(self.file_path, text)
             _store_recovery(entries)
         elif key in entries and self._recovery_data is None:
             del entries[key]
@@ -492,11 +502,44 @@ class VIMDApp(App):
         if content == self.query_one(Editor).text:
             self._clear_recovery()  # 内容一致 = 没有真正丢失的东西
             return
+        if self._file_changed_after_draft(entry):
+            # 文件比草稿新 = 关掉 VIMD 期间被外部程序 (agent) 改过: 不是未保存
+            # 丢失, 不必以 recovery 为准 — 同步草稿、不弹恢复框
+            self._adopt_file_into_draft()
+            return
         # 缓存在内存: 回调时盘上条目可能已被清掉, 不再二次读盘
         self._recovery_data = entry
         self.push_screen(
             RecoveryPrompt(entry.get("path", "")), self._on_recovery_choice
         )
+
+    def _file_changed_after_draft(self, entry: dict) -> bool:
+        """草稿写完之后, 文件在盘上又被改过 → 差异来自外部, 不是数据丢失。
+
+        判据: 文件 mtime 晚于草稿条目的写入时刻 ts。崩溃/强杀那条路是 ts 晚于
+        (或等于) 文件 mtime (草稿比文件新, 丢的是未保存内容) → 仍走恢复框;
+        没有 ts 的旧条目也走恢复框 (宁可多问一句, 不静默吞草稿)。
+        """
+        ts = entry.get("ts")
+        if self.file_path is None or not isinstance(ts, (int, float)):
+            return False
+        try:
+            return self.file_path.stat().st_mtime > ts
+        except OSError:
+            return False
+
+    def _adopt_file_into_draft(self) -> None:
+        """外部改动这条路: 以文件为准, 把当前内容写回草稿, 不弹恢复框。
+
+        草稿本来就落后于文件 (关掉 VIMD 期间被 agent 改过), 这种差异不算
+        数据丢失; 顺手把草稿抬到当前内容, 下次打开内容一致 → 不会再问一遍。
+        """
+        entries = _load_recovery()
+        entries[_recovery_key(self.file_path)] = _draft_entry(
+            self.file_path, self.query_one(Editor).text
+        )
+        _store_recovery(entries)
+        self.notify("文件已被外部修改，恢复草稿已同步为当前内容")
 
     def _reset_recovery_prompt(self) -> None:
         """换文件/新建: 旧文件的"稍后"缓存与底栏按钮收回。

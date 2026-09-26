@@ -79,9 +79,13 @@ class Editor(TextArea):
             formatting.insert_code_block(self)
 
     def _watch_show_line_numbers(self) -> None:
-        """行号开关: 清渲染缓存 + 栅栏宽度参与布局刷新。"""
-        self._line_cache.clear()
-        self.refresh(layout=True)
+        """行号开关 — 交给原生: **重折行** (wrap_width 随 gutter 变) + 光标回视。
+
+        覆写曾只清缓存+刷新, 把原生的重折行丢了 → 关行号后 wrap_width 变宽但
+        文档还按旧宽度折着, 每行末尾短 4-5 格, 拼成右边一整条空白带
+        (2026-09-26 用户 bug:「关行号后正文宽度不变,右边空出一大片」)。
+        """
+        super()._watch_show_line_numbers()
 
     def _gutter_digits(self) -> int:
         """行号位数 — 必须按**视觉行总数**算, 不能用逻辑行数。

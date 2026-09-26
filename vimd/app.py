@@ -5,7 +5,7 @@
     内置 io/links 纯逻辑 (源自 MDPad v2, 零 Qt 依赖)
 
 视图模式 (持久化到 %APPDATA%/VIMD/settings.json):
-    F2 编辑 · F3 预览 · F4 分屏
+    Alt+1 编辑 · Alt+2 预览 · Alt+3 分屏 · Alt+H 帮助 · Alt+L 行号 · Alt+Q 退出
 """
 
 from __future__ import annotations
@@ -278,11 +278,14 @@ class VIMDApp(App):
         Binding("ctrl+shift+l", "format_image", "图片", show=False),
         # 缩放: VIMD 不再自绑快捷键 (2026-09-25 用户定) — 用终端自带的
         # Ctrl+= / Ctrl+- / Ctrl+0, 那三个键被 Windows Terminal 接管, 应用本来也收不到
-        Binding("ctrl+h", "show_help", "帮助"),
-        Binding("f2", "mode_edit", "编辑"),
-        Binding("f3", "mode_preview", "预览"),
-        Binding("f4", "mode_split", "分屏"),
-        Binding("ctrl+q", "request_quit", "退出"),
+        # 快捷键 2026-09-26 用户改绑: 帮助 Alt+H, 行号 Alt+L, 三模式 Alt+1/2/3
+        # (F2/F3/F4、Ctrl+H 不再绑定; Alt 字母在 WT 实测可达, alt+数字待真机确认)
+        Binding("alt+h", "show_help", "帮助"),
+        Binding("alt+l", "toggle_line_numbers", "行号"),
+        Binding("alt+1", "mode_edit", "编辑"),
+        Binding("alt+2", "mode_preview", "预览"),
+        Binding("alt+3", "mode_split", "分屏"),
+        Binding("alt+q", "request_quit", "退出"),
     ]
 
     def __init__(self, path: str | None = None,
@@ -357,7 +360,7 @@ class VIMDApp(App):
         self._check_recovery()
 
     def on_unmount(self) -> None:
-        """退出 (含 Ctrl+Q / 窗口× / run_test 收尾): 放掉单例登记。
+        """退出 (含 Alt+Q / 窗口× / run_test 收尾): 放掉单例登记。
 
         进程被杀时内核也会兜底回收, 但正常退出就别等人来清 —— 否则紧接着
         重开同一个文件会被判成"还开着"。
@@ -813,6 +816,10 @@ class VIMDApp(App):
     # ── 帮助与退出 ──────────────────────────────────────────
     def action_show_help(self) -> None:
         self.push_screen(HelpScreen())
+
+    def action_toggle_line_numbers(self) -> None:
+        """Alt+L: 行号开关 — 与设置窗同一个开关 (set_line_numbers 负责落盘)。"""
+        self.set_line_numbers(not self.show_line_numbers)
 
     def action_show_settings(self) -> None:
         self.push_screen(SettingsScreen())

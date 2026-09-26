@@ -18,7 +18,7 @@ from textual.widgets import Button, Checkbox, Input, Static
 # 快捷键一览: (分组, [(键, 说明), ...]) — 一行一条, 键列按单元格宽度对齐
 # (键里有 ↑/↓ 这类箭头, 另存为这类中文说明在右边, 用 len() 对齐会错位)
 HELP_KEYS: list[tuple[str, list[tuple[str, str]]]] = [
-    ("视图", [("F2", "编辑模式"), ("F3", "预览模式"), ("F4", "分屏模式")]),
+    ("视图", [("Alt+1", "编辑模式"), ("Alt+2", "预览模式"), ("Alt+3", "分屏模式")]),
     ("文件", [("Ctrl+N", "新建"), ("Ctrl+O", "打开"), ("Ctrl+S", "保存"),
               ("Ctrl+Shift+S", "另存为")]),
     ("编辑", [("Ctrl+A", "全选"), ("Ctrl+Z", "撤销"), ("Ctrl+Y", "重做"),
@@ -26,7 +26,7 @@ HELP_KEYS: list[tuple[str, list[tuple[str, str]]]] = [
               ("Shift+Enter", "查找上一个")]),
     ("格式", [("Ctrl+B", "加粗"), ("Ctrl+I", "斜体"), ("Ctrl+K", "代码块"),
               ("Ctrl+L", "链接"), ("Ctrl+Shift+L", "内嵌图片")]),
-    ("其他", [("Ctrl+H", "帮助"), ("Ctrl+Q", "退出"),
+    ("其他", [("Alt+H", "帮助"), ("Alt+L", "显示行号"), ("Alt+Q", "退出"),
               ("Enter / Esc", "关闭弹窗")]),
 ]
 
@@ -94,7 +94,7 @@ class CaseCheckbox(Checkbox):
 
 
 class HelpScreen(ModalScreen[None]):
-    """Ctrl+H 帮助。点击盒外关闭。"""
+    """Alt+H 帮助。点击盒外关闭。"""
 
     BINDINGS = [
         Binding("escape", "dismiss_screen", "关闭"),

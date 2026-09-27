@@ -811,6 +811,7 @@ async def main():
 
     # ── 链接分发单测 ──
     import vimd.preview as pvmod
+    from types import SimpleNamespace
 
     opened = []
     notified = []
@@ -823,20 +824,53 @@ async def main():
             raise OSError(p)
 
     pvmod.os.startfile = fake_startfile
-    pvmod.open_href("https://example.com", Path.cwd(), notified.append)
-    pvmod.open_href(str(SAMPLE), Path.cwd(), notified.append)
-    pvmod.open_href("missing.png", Path.cwd(), notified.append)
-    pvmod.open_href("#锚点", Path.cwd(), notified.append)
-    check("web 分流",
-          any(k == "web" and u == "https://example.com" for k, u in opened))
-    check("file 分流",
-          any(k == "file" and u.endswith("sample.md") for k, u in opened))
-    check("相对缺失提示", any("打不开" in n for n in notified))
-    check("锚点提示", any("锚点" in n for n in notified))
-    real = SCRATCH / "屏 截.png"
-    real.write_bytes(b"x")
-    pvmod.open_href(quote(str(real)), Path.cwd(), notified.append)
-    check("编码 href 还原打开", ("file", str(real)) in opened)
+
+    # md 链接**不**走 os.startfile (会经 .md 文件关联回到 VIMD.exe, 启动器一看父
+    # 进程 —— 正在跑的这个 TUI —— 有控制台就接手, 第二个编辑器挤进当前窗口),
+    # 改走 launcher.open_in_new_window; 三个落点全在这里桩掉, 不真开窗。
+    import vimd.launcher as lz
+
+    spawns, wakes, usable_calls = [], [], []
+    real_create, real_peek = lz._create_process, lz._peek_retry
+    real_wake, real_usable = lz.wake, lz.usable_parent_console
+    lz._create_process = lambda exe, args, flags: (
+        spawns.append((exe, list(args), flags)) or True)
+    lz.usable_parent_console = lambda: (usable_calls.append(1) or False)
+    lz.wake = lambda hwnd: (wakes.append(hwnd) or True)
+    lz._peek_retry = lambda key, tries=6, delay=0.25: None
+    try:
+        pvmod.open_href("https://example.com", Path.cwd(), notified.append)
+        pvmod.open_href(str(SAMPLE), Path.cwd(), notified.append)
+        pvmod.open_href("missing.md", Path.cwd(), notified.append)
+        pvmod.open_href("missing.png", Path.cwd(), notified.append)
+        pvmod.open_href("#锚点", Path.cwd(), notified.append)
+        check("web 分流",
+              any(k == "web" and u == "https://example.com" for k, u in opened))
+        check("md 链接新开窗口 (带路径 + CREATE_NEW_CONSOLE)",
+              len(spawns) == 1
+              and spawns[0][1] and spawns[0][1][-1] == str(SAMPLE)
+              and spawns[0][2] == lz.CREATE_NEW_CONSOLE)
+        check("md 新窗不问父控制台 (问了就挤进当前窗口)", not usable_calls)
+        check("缺失 md 回落系统打开并提示",
+              any(k == "file" and u.endswith("missing.md") for k, u in opened)
+              and any("missing.md" in n for n in notified))
+        check("相对缺失提示", any("missing.png" in n for n in notified))
+        check("锚点提示", any("锚点" in n for n in notified))
+
+        # 已经有窗口开着它 -> 只抬那扇窗, 不开第二个
+        lz._peek_retry = lambda key, tries=6, delay=0.25: SimpleNamespace(
+            pid=1, hwnd=0x2222)
+        pvmod.open_href(str(SAMPLE), Path.cwd(), notified.append)
+        check("已开的 md 只抬那个窗口", wakes == [0x2222] and len(spawns) == 1)
+
+        real = SCRATCH / "屏 截.png"
+        real.write_bytes(b"x")
+        pvmod.open_href(quote(str(real)), Path.cwd(), notified.append)
+        check("编码 href 还原打开", ("file", str(real)) in opened)
+    finally:
+        lz._create_process, lz._peek_retry = real_create, real_peek
+        lz.wake, lz.usable_parent_console = real_wake, real_usable
+        os.environ.pop(lz.SPAWNED_ENV, None)  # _spawn_tui 在本进程留的标记
 
     # ── 拖放去引号 (WT 拖入文件带引号) ──
     from vimd.io import unquote_dropped_path as uq

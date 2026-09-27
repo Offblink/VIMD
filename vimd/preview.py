@@ -24,6 +24,7 @@ from textual.await_complete import AwaitComplete
 from textual.widgets import Markdown
 from textual.widgets.markdown import MarkdownBlock
 
+from .launcher import open_in_new_window
 from .links import classify_navigation_url, local_path_from_navigation
 
 PREVIEW_MAX = 32_768  # 预览渲染字符上限, 超出截断并提示
@@ -60,6 +61,12 @@ def open_href(href: str, doc_dir: Path, notify) -> None:
         webbrowser.open(href)  # 原始编码形式给浏览器
         return
     try:
+        # 指向 md 的链接交给 VIMD 自己: 新开一个窗口 (或抬已开着它的那个)。
+        # 直接 os.startfile 会经 .md 文件关联回到 VIMD.exe, 而启动器一看父进程
+        # (正是当前这个 TUI) 有控制台就接手 —— 第二个编辑器挤进当前窗口各画各的。
+        if target.suffix.lower() == ".md" and target.is_file() \
+                and open_in_new_window(target):
+            return
         os.startfile(str(target))
     except OSError:
         notify(f"打不开: {target}")

@@ -113,13 +113,33 @@ def _tui_target():
     return None
 
 
-def _spawn_tui(argv: list[str]) -> int:
+def open_in_new_window(path) -> bool:
+    """程序内跳转 (预览里点 📝 到另一个 md) 专用: 已开就抬那扇窗, 否则新开一个窗口。
+
+    与 main() 的差别只在**不看父控制台能不能接手**: 调用方是正在跑的 TUI, 它的
+    控制台就是用户眼前这扇窗 —— 接手等于把第二个编辑器塞进同一个标签, 两个
+    Textual 各画各的, 屏幕当场花掉 (2026-09-27 实测: 新起的 VIMD-tui 控制台句柄
+    与调用方**同一个** hwnd, 预览里点 [](X.md) 就是这么复现的)。
+
+    返回 True = 已经处理完 (抬窗 / 拉起都算); False = 找不到编辑器本体,
+    交回调用方自己处理 (退回 os.startfile)。
+    """
+    if _tui_target() is None:
+        return False
+    key = singleton_key(str(path))
+    owner = _peek_retry(key)
+    if owner is not None and wake(owner.hwnd):
+        return True
+    return _spawn_tui([str(path)], force_new_window=True) == 0
+
+
+def _spawn_tui(argv: list[str], force_new_window: bool = False) -> int:
     target = _tui_target()
     if target is None:
         _complain()
         return 1
     exe, prefix = target
-    if usable_parent_console():
+    if not force_new_window and usable_parent_console():
         # 终端里手敲: 接管这个终端 (子进程附到同一个控制台), 不另开窗口
         os.environ.pop(SPAWNED_ENV, None)
         flags = 0

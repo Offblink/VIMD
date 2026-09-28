@@ -21,8 +21,10 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
+from textual.events import Paste
+from textual.screen import ModalScreen
 from textual.widget import Widget
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static, TextArea
 
 from .io import FileGuard, read_text_file, write_text_file
 
@@ -405,6 +407,22 @@ class VIMDApp(App):
         重开同一个文件会被判成"还开着"。
         """
         self.claim.release()
+
+    async def on_event(self, event) -> None:
+        """焦点不在文本控件上时, 把会被丢掉的粘贴 (WT 拖入的文件路径) 交给编辑器。
+
+        Textual 只把 Paste 转给**焦点控件** (textual/app.py `on_event`): 焦点在预览上时
+        (Alt+2 预览独占 / 在分屏里点过预览, 滚动容器拿走了焦点) 没人接, 事件静默消失 ——
+        真机实测: 这几种状态下把文件拖进窗口"无响应", 路径哪也没落。焦点不在会自己消费
+        粘贴的输入控件上、且当前没有模态屏 (帮助/设置/查找/恢复弹窗自己管) 时, 直接转发
+        给编辑器 —— 不能只调 focus() 再让基类转: Widget.focus() 下一拍才生效, 同一拍里
+        基类看到的焦点还是旧的 (实测那样转给了预览, 照样丢)。
+        """
+        if (isinstance(event, Paste) and not event.is_forwarded
+                and not isinstance(self.focused, (Input, TextArea))
+                and not isinstance(self.screen, ModalScreen)):
+            self.query_one(Editor)._forward_event(event)
+        await super().on_event(event)
 
     # ── 设置持久化 (mode / line_numbers / cursor, 读-改-写保其它键) ──
     def _load_settings(self) -> dict:

@@ -920,6 +920,35 @@ async def main():
             check("Home 仍是行首", ed5.cursor_location[1] == 0)
             await p5.pause(0.3)
 
+            # 拖放落点: 焦点在预览上时 (Alt+2 预览独占 / 在分屏里点过预览) Textual 只把
+            # Paste 转给焦点控件, 谁也收不到 -> 路径静默丢掉 (2026-09-28 真机复现: 那两
+            # 种状态把文件拖进窗口"无响应")。App.on_event 里焦点不在文本控件、且没有模
+            # 态屏时直接把粘贴转给编辑器 (去引号 + 插入)。
+            ed5.text = ""
+            app5.action_mode_preview()
+            await p5.pause(0.3)
+            check("预览独占时焦点不在编辑器", app5.focused is not ed5)
+            app5.post_message(Paste(r'"C:\a b\drop.md"'))
+            await p5.pause(0.8)
+            check("预览独占时拖入落进文档", ed5.text == r"C:\a b\drop.md")
+            app5.action_mode_split()
+            await p5.pause(0.3)
+            ed5.text = ""
+            await p5.click("#preview-scroll")
+            await p5.pause(0.3)
+            check("分屏点过预览: 焦点被滚动容器拿走", app5.focused is not ed5)
+            app5.post_message(Paste(r'"C:\c d\drop2.md"'))
+            await p5.pause(0.8)
+            check("分屏点过预览后拖入落进文档", ed5.text == r"C:\c d\drop2.md")
+            ed5.text = ""
+            app5.action_show_help()
+            await p5.pause(0.3)
+            app5.post_message(Paste(r'"C:\e f\drop3.md"'))
+            await p5.pause(0.5)
+            check("帮助弹窗打开时拖入不落编辑器", ed5.text == "")
+            await p5.press("escape")
+            await p5.pause(0.3)
+
         # 打开/另存为的路径输入框同样只落一次
         app6 = VIMDApp()
         async with app6.run_test(size=(100, 30)) as p6:

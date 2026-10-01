@@ -345,6 +345,7 @@ class VIMDApp(App):
         self.show_line_numbers = True  # 帮助弹窗内可切换 (CaseCheckbox 同款 UX)
         self._recovery_gen = 0
         self._recovery_data: dict | None = None
+        self._tab_title: str | None = None  # 标签标题已设置过的值 (去重)
 
     # ── 组装 ────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
@@ -372,14 +373,11 @@ class VIMDApp(App):
             yield Button("", id="meta", compact=True)
 
     def on_mount(self) -> None:
-        # 终端标签/窗口标题 = VIMD。
+        # 标签标题 = 打开的文件名 (2026-10-01 用户定; 未命名回 VIMD),
+        # 由 refresh_status 里的 _sync_tab_title 跟随 file_path 更新。
         # 实测: 写 OSC2 到 sys.stdout 会被 textual 驱动吞掉 (输出抓包无 ]2;)。
         # 改走 SetConsoleTitleW — cmd 的 title 命令即此 API,
         # ConPTY 再转成 OSC2 送达 Windows Terminal 标签。
-        if os.name == "nt":
-            import ctypes
-
-            ctypes.windll.kernel32.SetConsoleTitleW("VIMD")
         mode = self._load_mode()
         # 设置回放: 行号开关立即生效
         line_numbers = self._load_settings().get("line_numbers")
@@ -665,6 +663,17 @@ class VIMDApp(App):
         self.query_one(Editor).show_line_numbers = visible
         self._store_settings({"line_numbers": visible})
 
+    def _sync_tab_title(self) -> None:
+        """标签标题跟随打开的文件名; 未命名回 VIMD (2026-10-01 用户定)。"""
+        title = self.file_path.name if self.file_path else "VIMD"
+        if title == self._tab_title:
+            return
+        self._tab_title = title
+        if os.name == "nt":
+            import ctypes  # noqa: PLC0415 (仅 Windows 需要)
+
+            ctypes.windll.kernel32.SetConsoleTitleW(title)
+
     def refresh_status(self) -> None:
         # 收尾竞态: 消息/防抖定时器晚于控件卸载到期 (窗口关闭 / pilot 收尾) →
         # query_one 抛 NoMatches (2026-09-26 大文件基准里两次崩在退出路径)。
@@ -678,9 +687,11 @@ class VIMDApp(App):
         _, vis_y = editor.wrapped_document.location_to_offset(
             editor.cursor_location
         )
-        name = self.file_path.name if self.file_path else "未命名"
         dirty = "● " if editor.text != self._saved_text else ""
-        self.query_one("#tb-name", Static).update(f" {dirty}{name}")
+        # 第二行只留脏点, 不再显示文件名 (2026-10-01 用户定;
+        # 文件名挪去标签标题, 见 _sync_tab_title)
+        self.query_one("#tb-name", Static).update(f" {dirty}")
+        self._sync_tab_title()
         meta = self.query_one("#meta", Button)
         # 有选区: 模式左边报选中字数 (含标点与空格; 折行 \n 不算字)
         sel_count = _selected_char_count(editor)

@@ -190,10 +190,10 @@ async def main():
 
         # ── 两行状态栏 ──
         top = str(app.query_one("#tb-name").render())
-        check("文件名在顶栏左上", "sample.md" in top)
+        check("第二行不再显示文件名 (挪去标签标题)", "sample.md" not in top)
         trow = app.query_one("#title-row")
         brow = app.query_one("#topbar")
-        check("顶部两行: 标题行在文件名行之上",
+        check("顶部两行: 标题行在第二行之上",
               trow.region.y < brow.region.y)
         check("标题行 VIMD",
               str(app.query_one("#tr-title").render()).strip() == "VIMD")
@@ -574,12 +574,13 @@ async def main():
         check("越界行不编号且保持整宽",
               row1 and row1[0].text.strip() == ""
               and len(row1[0].text) >= 40)
-        # ── 控制台标题 = VIMD (title 命令同款 API, WT 标签跟随) ──
+        # ── 标签标题 = 打开的文件名 (title 命令同款 API, WT 标签跟随) ──
         import ctypes
 
         buf = ctypes.create_unicode_buffer(256)
         ctypes.windll.kernel32.GetConsoleTitleW(buf, 256)
-        check("控制台标题=VIMD", buf.value == "VIMD")
+        check("标签标题=当前打开的文件名",
+              buf.value == app.file_path.name)
 
         # 行号随滚动走 (y=屏幕行, 行号须 = y+scroll_y+start)
         ed.text = "\n".join(f"L{i:03d} 行" for i in range(1, 121))
@@ -644,7 +645,10 @@ async def main():
         check("Ctrl+N 干净态直接新建",
               ed.text == "" and app.file_path is None)
         nm = str(app.query_one("#tb-name").render())
-        check("新建后顶栏未命名无脏点", "未命名" in nm and "●" not in nm)
+        check("新建后顶栏无文件名无脏点", "未命名" not in nm and "●" not in nm)
+        buf2 = ctypes.create_unicode_buffer(256)
+        ctypes.windll.kernel32.GetConsoleTitleW(buf2, 256)
+        check("新建后标签标题回 VIMD", buf2.value == "VIMD")
 
         # ── Ctrl+N 脏态 -> 确认框 (new 文案) ──
         await pilot.press("end")

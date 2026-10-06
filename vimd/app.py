@@ -13,6 +13,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
+from bisect import bisect_right
 from pathlib import Path
 
 from rich.cells import cell_len
@@ -31,8 +33,8 @@ from .io import FileGuard, read_text_file, write_text_file
 from . import formatting
 from .dialogs import HelpScreen, PathPrompt, QuitConfirm, RecoveryPrompt, SettingsScreen
 from .editor import Editor
-from .find_replace import FindState, FindScreen, find_next as _find_next
-from .preview import Preview
+from .find_replace import FindState, FindScreen, _matches, find_next as _find_next
+from .preview import Preview, _line_starts
 from .singleton import DocClaim, singleton_key
 from .sysdialog import system_open_file_dialog, system_save_file_dialog
 
@@ -219,6 +221,27 @@ class PreviewScroll(VerticalScroll):
         self.scroll_to(y=target, animate=False)
         return True
 
+    def reveal(self, block: Widget, frac: float) -> bool:
+        """查找定位用: 把块内的锚点滚到视口中央 (锚点已在视口里则不动)。
+
+        与 sync_caret 的"只向下推"不同 — 查找要能往回跳, 也不该被跟随状态
+        拦住; 目标只由块位置算出 (不看当前位置), 同一帧叫几次结果都一样。
+        照样先记 _auto_y: 这是程序滚动, 跟随状态不动。
+        """
+        if not self.display:
+            return False
+        box = block.virtual_region
+        if box.height <= 0:
+            return False  # 预览刚重建, 块还没布局 → 下次导航再说
+        anchor = self._content_y(block) + round(frac * (box.height - 1))
+        view = self.scrollable_content_region.height
+        if int(self.scroll_y) <= anchor <= int(self.scroll_y) + view - 1:
+            return False  # 已经看得见, 不动 (来回 Alt+X/X 不抖)
+        target = max(0, min(anchor - view // 2, self.max_scroll_y))
+        self._auto_y = round(target)
+        self.scroll_to(y=target, animate=False)
+        return True
+
 
 class VIMDApp(App):
     """VIMD 应用 (VIM + Markdown)。"""
@@ -342,6 +365,7 @@ class VIMDApp(App):
         self._mode = "edit"
         self._preview_gen = 0  # 防抖代数计数
         self.find_state = FindState()  # 查找状态跨弹窗存续
+        self._find_span: tuple[int, int] | None = None  # 当前命中 (源码偏移), 预览高亮用
         self.show_line_numbers = True  # 帮助弹窗内可切换 (CaseCheckbox 同款 UX)
         self._recovery_gen = 0
         self._recovery_data: dict | None = None
@@ -634,6 +658,9 @@ class VIMDApp(App):
         # 重建是异步挂载的, 块位置要等下一帧才生效 — 排到刷新后补一次定位
         # (跟随态下把光标钉回底边; 不跟随时 sync_caret 自己就短路了)
         self.call_after_refresh(self._sync_preview_scroll)
+        # 查找高亮可能挂在被这次重建换掉的块上 — 同一帧补回去
+        # (文本/查询变了会校验失败并静默收回, 见 _apply_find_highlight)
+        self.call_after_refresh(self._reapply_find_highlight)
 
     def _sync_preview_scroll(self) -> None:
         self.query_one("#preview-scroll", PreviewScroll).sync_caret()
@@ -922,9 +949,16 @@ class VIMDApp(App):
 
     # ── 查找替换 (居中弹窗; 状态存 app.find_state) ──────────
     def action_find(self) -> None:
-        self.push_screen(
-            FindScreen(), lambda _: self.query_one(Editor).focus()
-        )
+        self.push_screen(FindScreen(), lambda _: self._focus_after_find())
+
+    def _focus_after_find(self) -> None:
+        editor = self.query_one(Editor)
+        if editor.display:
+            editor.focus()
+        else:
+            # 预览模式: 焦点还给滚动容器 — focus 一个隐藏的 Editor 会把
+            # 方向键/PgUp 全吞进看不见的编辑区, 预览键盘滚动失灵
+            self.query_one("#preview-scroll", PreviewScroll).focus()
 
     def action_find_next(self) -> None:
         _find_next(
@@ -936,6 +970,62 @@ class VIMDApp(App):
             self.query_one(Editor), self.find_state, backward=True,
             notify=self.notify,
         )
+
+    # ── 查找 → 预览联动 (预览/分屏下让命中看得见) ───────────
+    def sync_find_match(self, start: int | None, end: int | None = None) -> None:
+        """find_next 选中匹配后调用: 记下命中, 预览可见时滚过去并高亮。
+
+        编辑视图只记不画 (选区本来就在编辑区里看得见), 预览重渲/切视图时由
+        `_render_preview_now` 排的 `_reapply_find_highlight` 补上。
+        传 None = 收回 (查询被清空时走这里)。
+        """
+        if start is None:
+            self._find_span = None
+            self.query_one(Preview).clear_hit()
+            return
+        self._find_span = (start, end)
+        self._apply_find_highlight(scroll=True, notify=True)
+
+    def _reapply_find_highlight(self) -> None:
+        """预览重渲后补高亮 — 只画不滚 (滚动归查找动作与跟随状态机管)。"""
+        self._apply_find_highlight(scroll=False)
+
+    def _apply_find_highlight(self, *, scroll: bool, notify: bool = False) -> None:
+        preview = self.query_one(Preview)
+        span = self._find_span
+        if span is None or self._mode == "edit":
+            return
+        state = self.find_state
+        text = self.query_one(Editor).text
+        s, e = span
+        flags = 0 if state.case else re.IGNORECASE
+        # 文本或查询变了 (打字 / 替换 / 换文件) → 旧命中作废, 不许高亮错地方
+        if (not state.query or e > len(text)
+                or not re.fullmatch(re.escape(state.query), text[s:e], flags)):
+            self._find_span = None
+            preview.clear_hit()
+            return
+        starts = _line_starts(text)
+        line = bisect_right(starts, s) - 1
+        if line >= preview.rendered_source_lines:
+            preview.clear_hit()  # 匹配在 PREVIEW_MAX 截断之外: 滚过去也看不见
+            if notify:
+                self.notify("匹配超出预览渲染范围 (文档太长已被截断)")
+            return
+        hit = preview.block_for_line(line)
+        if hit is None:
+            preview.clear_hit()
+            return
+        block, frac = hit
+        # 同块多处匹配: 按序号对齐, 高亮的必须是编辑区选中的那处
+        bs, be = preview.source_lines(block)
+        lo = starts[bs] if bs < len(starts) else len(text)
+        hi = starts[be] if be < len(starts) else len(text)
+        nth = next((i for i, m in enumerate(_matches(text, state))
+                    if lo <= m[0] < hi and m[0] == s), 0)
+        preview.set_hit(block, state.query, nth, state.case)
+        if scroll:
+            self.query_one("#preview-scroll", PreviewScroll).reveal(block, frac)
 
     # ── 格式化快捷键 (键义见 formatting.py) ─────────────────
     def _format_action(self, fn) -> None:

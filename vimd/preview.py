@@ -21,6 +21,7 @@ from urllib.parse import unquote, urlparse
 
 from markdown_it import MarkdownIt
 from textual.await_complete import AwaitComplete
+from textual.content import Content
 from textual.widgets import Markdown
 from textual.widgets.markdown import MarkdownBlock
 
@@ -199,6 +200,9 @@ class Preview(Markdown):
         self._body_starts: list[int] = []  # _body 的行首下标表 (比对键要用)
         self._parser = MarkdownIt("gfm-like")  # 复用: 每次新建实测要 ~30ms
         self._line_offset = 0  # 截断提示插在正文前的行数 (源码行 → 渲染行)
+        self.rendered_source_lines = 1 << 60  # 实际渲染到的源码行数 (截断时小于全文)
+        self._hit_block: MarkdownBlock | None = None  # 当前高亮的块
+        self._hit_content: Content | None = None  # 高亮前的原内容 (还原用)
 
     def on_markdown_link_clicked(self, event: Markdown.LinkClicked) -> None:
         event.stop()
@@ -235,6 +239,44 @@ class Preview(Markdown):
         start, end = hit.source_range
         return hit, min(max((target - start) / (end - start), 0.0), 1.0)
 
+    def source_lines(self, block: MarkdownBlock) -> tuple[int, int]:
+        """块的**源码**行范围 — source_range 是渲染体行号, 先减截断偏移。"""
+        start, end = block.source_range
+        return max(start - self._line_offset, 0), max(end - self._line_offset, 0)
+
+    def set_hit(self, block: MarkdownBlock, query: str, nth: int,
+                case: bool) -> bool:
+        """把块渲染文本里的第 nth 处 query 反色高亮; 定位不到就不高亮 (返回 False)。
+
+        高亮只加一个 Content span (MarkdownBlock 是 Static, 内容即带 span 的
+        Content), 不改源码、不重建块 — 增量重建的比对键 (块源文本) 不受影响。
+        nth 用来对齐编辑区选区: 同一个块里有多处匹配时, 高亮的必须是选中的那处。
+        查询带 markdown 语法 (如 `**词**`) 时渲染文本里找不到原样子串 → 降级为
+        不高亮, 滚动定位照旧 (调用方不依赖这里的返回值做什么分支)。
+        """
+        self.clear_hit()
+        if not query:
+            return False
+        content = block._content
+        if not content.plain:
+            return False
+        flags = 0 if case else re.IGNORECASE
+        hits = list(re.finditer(re.escape(query), content.plain, flags))
+        if not hits:
+            return False
+        m = hits[min(nth, len(hits) - 1)]
+        self._hit_block = block
+        self._hit_content = content
+        block.set_content(content.stylize("reverse", m.start(), m.end()))
+        return True
+
+    def clear_hit(self) -> None:
+        """收回高亮 — 把改过的那个块还原成高亮前的内容。"""
+        if self._hit_block is not None:
+            self._hit_block.set_content(self._hit_content)
+            self._hit_block = None
+            self._hit_content = None
+
     def update(self, markdown: str):
         """同文去重 + 超长截断 (PREVIEW_MAX) + 归一化, 然后**增量重建**。"""
         if markdown == self._source:
@@ -243,6 +285,7 @@ class Preview(Markdown):
         self._source = markdown
         body = markdown
         self._line_offset = 0
+        self.rendered_source_lines = 1 << 60  # 未截断 = 全文都渲染了
         if len(body) > PREVIEW_MAX:
             cut = body[:PREVIEW_MAX].rsplit("\n", 1)[0]
             # 文案必须与文档内容 / 长度无关: 原来的 "{全文} 字符 / 前 {cut} 字符" 每按
@@ -255,6 +298,8 @@ class Preview(Markdown):
             )
             body = notice + cut
             self._line_offset = notice.count("\n")
+            # 截断只按整行切: 行号 >= 这个数的源码行没渲染, 查找定位到也白搭
+            self.rendered_source_lines = cut.count("\n") + 1
         # 顺序: 先包空格目的地, 再把本地文件/目录链接统一成类型 emoji
         return self._update_incremental(linkify_local_dests(normalize_dests(body),
                                                             self.doc_dir))

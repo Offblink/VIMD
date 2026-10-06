@@ -92,6 +92,8 @@ def find_next(editor: Editor, state: FindState, backward: bool = False,
         _location_of(text, start), _location_of(text, end)
     )
     editor.scroll_cursor_visible()
+    # 预览可见时把预览也滚到命中处并高亮 (编辑视图下 app 只记不画)
+    editor.app.sync_find_match(start, end)
 
 
 def replace_all(editor: Editor, state: FindState, notify=None) -> None:
@@ -208,7 +210,12 @@ class FindScreen(ModalScreen[None]):
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "find-input":
+            # 重开弹窗的预填 (值回填成原查询) 不算变 — 高亮别跟着闪没
+            fresh = event.value != self.state.query
             self.state.query = event.value
+            if fresh:
+                # 查询真变了: 上一处命中的预览高亮作废 (Enter / Alt+X 重定位)
+                self.app.sync_find_match(None)
         elif event.input.id == "replace-input":
             self.state.replace = event.value
         self.refresh_count()

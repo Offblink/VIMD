@@ -321,6 +321,83 @@ async def main():
         await pilot.press("escape")
         await pilot.pause(0.3)
 
+        # ── 预览模式下搜索 (2026-10-07): 命中要滚到 + 反色高亮, 焦点还给预览 ──
+        prev = app.query_one(Preview)
+        await pilot.press("alt+2")
+        await pilot.pause(0.3)
+        await pilot.press("home")
+        await pilot.pause(0.3)
+        check("预览模式就位且在顶部", not ed.display and scr.scroll_y == 0)
+        await pilot.press("ctrl+f")
+        await pilot.pause(0.4)
+        check("预览模式 Ctrl+F 照样弹查找窗", isinstance(app.screen, FindScreen))
+        fs = app.screen
+        fs.query_one("#find-input", Input).value = "这是第 20 段"
+        await pilot.pause(0.3)
+        await pilot.press("enter")
+        await pilot.pause(0.5)
+        check("预览模式 Enter 仍选中编辑区匹配",
+              ed.selected_text == "这是第 20 段")
+        check(f"预览滚到命中处 (scroll_y={scr.scroll_y:.0f})", scr.scroll_y > 0)
+        line20 = ed.text[:ed.text.index("这是第 20 段")].count("\n")
+        hit20 = prev.block_for_line(line20)
+        check("命中行映射到渲染块", hit20 is not None)
+        if hit20:
+            blk = hit20[0]
+            await pilot.pause(0.3)
+            # region 口径: 命中块整体落在预览可视区里 (真看得见, 不是"滚过了")
+            check(f"命中块在预览视口内 (块={blk.region}, 预览={scr.region})",
+                  blk.region.y >= scr.region.y
+                  and blk.region.bottom <= scr.region.bottom)
+            idx20 = blk._content.plain.find("这是第 20 段")
+            check("命中词在块渲染文本里", idx20 >= 0)
+            check("命中处反色高亮 (像选中)", idx20 >= 0 and any(
+                s.start <= idx20 < s.end and "reverse" in str(s.style)
+                for s in blk._content.spans))
+        # 同块多处匹配: 换查询走 Alt+X, 高亮要跟着换块, 旧块要收回
+        fs.query_one("#find-input", Input).value = "超高"
+        await pilot.pause(0.3)
+        await pilot.press("enter")
+        await pilot.pause(0.5)
+        hit_a = prev.block_for_line(ed.cursor_location[0])
+        await pilot.press("alt+x")
+        await pilot.pause(0.5)
+        hit_b = prev.block_for_line(ed.cursor_location[0])
+        check("Alt+X 高亮换到下一处所在块",
+              hit_a is not None and hit_b is not None
+              and hit_a[0] is not hit_b[0])
+        if hit_a and hit_b:
+            check("旧块高亮已收回", not any(
+                "reverse" in str(s.style) for s in hit_a[0]._content.spans))
+            idx_b = hit_b[0]._content.plain.find("超高")
+            check("新块高亮在位", idx_b >= 0 and any(
+                s.start <= idx_b < s.end and "reverse" in str(s.style)
+                for s in hit_b[0]._content.spans))
+        # 关窗: 焦点必须回到预览滚动容器 (以前会 focus 隐藏的编辑器)
+        await pilot.press("escape")
+        await pilot.pause(0.3)
+        check("Esc 关窗且焦点回预览",
+              not isinstance(app.screen, FindScreen) and app.focused is scr)
+        sel_before = ed.selection
+        await pilot.press("alt+x")
+        await pilot.pause(0.4)
+        check("关窗后 Alt+X 在预览模式仍换命中", ed.selection != sel_before)
+        hit_c = prev.block_for_line(ed.cursor_location[0])
+        # 查询清空 → 高亮收回
+        await pilot.press("ctrl+f")
+        await pilot.pause(0.4)
+        fs = app.screen
+        fs.query_one("#find-input", Input).value = ""
+        await pilot.pause(0.3)
+        if hit_c:
+            check("清空查询收回高亮", not any(
+                "reverse" in str(s.style) for s in hit_c[0]._content.spans))
+        await pilot.press("escape")
+        await pilot.pause(0.3)
+        await pilot.press("alt+1")
+        await pilot.pause(0.3)
+        check("搜索测完回编辑视图", bool(ed.display) and not scr.display)
+
         # ── 通知位置 ──
         racks = [
             w for w in app.screen.walk_children()
@@ -1292,6 +1369,22 @@ async def main():
                       prev7.block_for_line(2) is not None)
                 check("截断: 截断点之外的尾行退到最近块",
                       prev7.block_for_line(500) is not None)
+                # 截断之外的匹配: 不滚不高亮, 只通知 — 查找不许默默装死也不许骗人
+                scr7 = app7.query_one("#preview-scroll")
+                notes7 = []
+                app7.notify = lambda message, *a, **k: notes7.append(str(message))
+                app7.action_mode_preview()
+                await p7.pause(0.5)
+                ed7 = app7.query_one(Editor)
+                check("截断外: 阈值确实低于全文行数",
+                      prev7.rendered_source_lines < len(ed7.text.splitlines()))
+                app7.find_state.query = "第30段"
+                app7.action_find_next()
+                await p7.pause(0.3)
+                check("截断外匹配: 发通知不装死",
+                      any("截断" in n for n in notes7))
+                check("截断外匹配: 预览不高亮", prev7._hit_block is None)
+                check("截断外匹配: 预览不滚动", scr7.scroll_y == 0)
         finally:
             prevmod.PREVIEW_MAX = saved_max
 

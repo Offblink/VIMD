@@ -246,7 +246,10 @@ class Preview(Markdown):
 
     def set_hit(self, block: MarkdownBlock, query: str, nth: int,
                 case: bool) -> bool:
-        """把块渲染文本里的第 nth 处 query 蓝底高亮 (black on blue); 定位不到就不高亮 (返回 False)。
+        """把块渲染文本里的第 nth 处 query 浅蓝底高亮 (black on #55aaff); 定位不到就不高亮 (返回 False)。
+
+        颜色用固定 RGB 不用 ANSI blue: ANSI 色走终端调色板, 深藏蓝主题下
+        黑字会糊 (2026-10-07 用户实感); #55aaff 对黑底/对白字都分得开。
 
         高亮只加一个 Content span (MarkdownBlock 是 Static, 内容即带 span 的
         Content), 不改源码、不重建块 — 增量重建的比对键 (块源文本) 不受影响。
@@ -268,7 +271,7 @@ class Preview(Markdown):
         self._hit_block = block
         self._hit_content = content
         block.set_content(
-            content.stylize("black on blue", m.start(), m.end())
+            content.stylize("black on #55aaff", m.start(), m.end())
         )
         return True
 

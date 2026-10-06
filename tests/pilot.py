@@ -352,7 +352,7 @@ async def main():
             idx20 = blk._content.plain.find("这是第 20 段")
             check("命中词在块渲染文本里", idx20 >= 0)
             check("命中处蓝底高亮 (像选中)", idx20 >= 0 and any(
-                s.start <= idx20 < s.end and "black on blue" in str(s.style)
+                s.start <= idx20 < s.end and "black on #55aaff" in str(s.style)
                 for s in blk._content.spans))
         # 同块多处匹配: 换查询走 Alt+X, 高亮要跟着换块, 旧块要收回
         fs.query_one("#find-input", Input).value = "超高"
@@ -368,10 +368,10 @@ async def main():
               and hit_a[0] is not hit_b[0])
         if hit_a and hit_b:
             check("旧块高亮已收回", not any(
-                "black on blue" in str(s.style) for s in hit_a[0]._content.spans))
+                "black on #55aaff" in str(s.style) for s in hit_a[0]._content.spans))
             idx_b = hit_b[0]._content.plain.find("超高")
             check("新块高亮在位", idx_b >= 0 and any(
-                s.start <= idx_b < s.end and "black on blue" in str(s.style)
+                s.start <= idx_b < s.end and "black on #55aaff" in str(s.style)
                 for s in hit_b[0]._content.spans))
         # 关窗: 焦点必须回到预览滚动容器 (以前会 focus 隐藏的编辑器)
         await pilot.press("escape")
@@ -391,7 +391,7 @@ async def main():
         await pilot.pause(0.3)
         if hit_c:
             check("清空查询收回高亮", not any(
-                "black on blue" in str(s.style) for s in hit_c[0]._content.spans))
+                "black on #55aaff" in str(s.style) for s in hit_c[0]._content.spans))
         await pilot.press("escape")
         await pilot.pause(0.3)
         await pilot.press("alt+1")

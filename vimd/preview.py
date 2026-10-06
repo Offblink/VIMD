@@ -246,7 +246,7 @@ class Preview(Markdown):
 
     def set_hit(self, block: MarkdownBlock, query: str, nth: int,
                 case: bool) -> bool:
-        """把块渲染文本里的第 nth 处 query 反色高亮; 定位不到就不高亮 (返回 False)。
+        """把块渲染文本里的第 nth 处 query 蓝底高亮 (black on blue); 定位不到就不高亮 (返回 False)。
 
         高亮只加一个 Content span (MarkdownBlock 是 Static, 内容即带 span 的
         Content), 不改源码、不重建块 — 增量重建的比对键 (块源文本) 不受影响。
@@ -267,7 +267,9 @@ class Preview(Markdown):
         m = hits[min(nth, len(hits) - 1)]
         self._hit_block = block
         self._hit_content = content
-        block.set_content(content.stylize("reverse", m.start(), m.end()))
+        block.set_content(
+            content.stylize("black on blue", m.start(), m.end())
+        )
         return True
 
     def clear_hit(self) -> None:
